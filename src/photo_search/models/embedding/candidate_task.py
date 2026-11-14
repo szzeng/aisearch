@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -16,6 +17,9 @@ from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import SELECTION_WRITER_ACTIVE, CatalogError
 from photo_search.config import catalog_db_path, runtime_dir
 from photo_search.models.embedding.registry import registry_for
+from photo_search.runtime.resource_lifecycle import close_owned_resource
+
+logger = logging.getLogger("photo_search.models.embedding.candidate_task")
 
 TASK_FILENAME = "embedding-candidate-task.json"
 BATCH_LIMIT = 100
@@ -326,7 +330,8 @@ class CandidateBuildManager:
                     manifest_path=entry.manifest_path,
                     device_policy=entry.device_policy,
                 )
-                with Catalog.open(data_root=self.root) as catalog:
+                catalog = Catalog.open(data_root=self.root)
+                try:
                     if str(encoder.spec().envelope["space_id"]) != str(state["space_id"]):
                         raise CatalogError("SPACE_MISMATCH", "the loaded provider no longer matches the candidate task")
                     _record_candidate_runtime(catalog, entry, encoder.health())
@@ -387,6 +392,14 @@ class CandidateBuildManager:
                             state["status"] = "COMPLETED"
                             state["completed_at_ms"] = time.time_ns() // 1_000_000
                             break
+                finally:
+                    close_owned_resource(
+                        catalog,
+                        on_failure=lambda error: logger.warning(
+                            "closing the candidate catalog failed; retaining it for retry: %s",
+                            error,
+                        ),
+                    )
                 state["owner_id"] = None if state.get("status") != "RUNNING" else self._owner_id
             if state.get("status") == "RUNNING":
                 state["status"] = "INTERRUPTED"

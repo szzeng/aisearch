@@ -167,7 +167,9 @@ class Job:
 
 
 def new_lease_token() -> str:
-    return secrets.token_hex(16)
+    from photo_search.runtime.lease_owner import tag_lease_token
+
+    return tag_lease_token(secrets.token_hex(16))
 
 
 def enqueue(
@@ -656,6 +658,52 @@ def fail_exhausted_leases(
     )
     _sync_subject_state(connection, rows=rows, now_ms=int(now_ms))
     return list(rows)
+
+
+def recover_clock_rollback_leases(
+    connection: sqlite3.Connection,
+    *,
+    now_ms: int,
+    app_owner_prefix: str | None,
+) -> list[int]:
+    """Expire only prior-app future leases written after a clock rollback.
+
+    ``updated_at`` is the last persisted lease decision. A value later than the current
+    wall clock proves that the system clock moved backwards after that row was written.
+    The application owner prefix excludes current-process tasks and unleased CLI tokens.
+    Keeping the RUNNING row and token intact lets the normal takeover path consume one
+    lost attempt and reject any late result from the previous application process.
+    """
+    if not app_owner_prefix:
+        return []
+    rows = connection.execute(
+        "SELECT job_id FROM jobs WHERE state = ? AND lease_expires_at > ? AND updated_at > ? "
+        "AND lease_token LIKE 'app:%' "
+        "AND instr(lease_token, ?)<>1",
+        (
+            STATE_RUNNING,
+            int(now_ms),
+            int(now_ms),
+            str(app_owner_prefix),
+        ),
+    ).fetchall()
+    if not rows:
+        return []
+    connection.execute(
+        "UPDATE jobs SET lease_expires_at = ?, updated_at = ? "
+        "WHERE state = ? AND lease_expires_at > ? AND updated_at > ? "
+        "AND lease_token LIKE 'app:%' "
+        "AND instr(lease_token, ?)<>1",
+        (
+            int(now_ms),
+            int(now_ms),
+            STATE_RUNNING,
+            int(now_ms),
+            int(now_ms),
+            str(app_owner_prefix),
+        ),
+    )
+    return [int(row["job_id"]) for row in rows]
 
 
 def _sync_subject_state(

@@ -30,6 +30,7 @@ from photo_search.refresh.pipeline import (
     refresh_library,
 )
 from photo_search.refresh.state import RefreshStatus, idle_status
+from photo_search.runtime.resource_lifecycle import close_owned_resource
 
 logger = logging.getLogger("photo_search.api.refresher")
 
@@ -82,6 +83,7 @@ class LibraryRefresher:
         self._status: RefreshStatus | None = None
         self._running = False
         self._closed = False
+        self._cleanup_failed = False
         self._cancel = threading.Event()
         self._thread: threading.Thread | None = None
         # ``None`` is an all-sources scope; concrete lists remain source-scoped.
@@ -160,7 +162,7 @@ class LibraryRefresher:
             else:  # pragma: no cover - defensive
                 time.sleep(0.01)
 
-    def close(self, *, timeout: float = CLOSE_TIMEOUT_SECONDS) -> None:
+    def close(self, *, timeout: float = CLOSE_TIMEOUT_SECONDS) -> bool:
         """Discard waiting builds and wait briefly for the active run to finish.
 
         One refresh run opens its service *inside its own thread* and closes it there again,
@@ -180,6 +182,9 @@ class LibraryRefresher:
                     "connection open",
                     float(timeout),
                 )
+                return False
+        with self._lock:
+            return not self._cleanup_failed
 
     # ---------------------------------------------------------------------- worker
     def _loop(
@@ -202,11 +207,10 @@ class LibraryRefresher:
         self, status: RefreshStatus, source_ids: Sequence[int] | None, mode: str,
         face_profile: str | None,
     ) -> None:
-        service: Any | None = None
         try:
-            service = self._service_factory()
-            if mode == "build" and source_ids is None and hasattr(service, "list_sources"):
-                if not service.list_sources():
+            self._service = self._service_factory()
+            if mode == "build" and source_ids is None and hasattr(self._service, "list_sources"):
+                if not self._service.list_sources():
                     status.note_error(
                         stage="build", code="EMPTY_LIBRARY",
                         message="No registered sources were available when the build started.",
@@ -214,9 +218,9 @@ class LibraryRefresher:
                     status.finish(state="FAILED", elapsed_ms=0)
                     return
             if self._executor is not None:
-                self._executor(service, status, source_ids)
+                self._executor(self._service, status, source_ids)
             else:
-                self._refresh(service, status, source_ids, mode, face_profile)
+                self._refresh(self._service, status, source_ids, mode, face_profile)
         except ScanInterrupted:
             status.note_error(stage="scan", code="CANCELLED", message="Refresh cancelled.")
             status.set_failed_stages(["cancelled"])
@@ -232,16 +236,31 @@ class LibraryRefresher:
             )
             status.finish(state="FAILED", elapsed_ms=0)
         finally:
-            if service is not None:
-                try:
-                    service.close()
-                except Exception:  # pragma: no cover - shutdown must not raise
-                    logger.debug("closing the refresh service failed", exc_info=True)
+            self._close_owned_service()
             if self._on_success is not None and str(status.snapshot().get("state")) == "COMPLETE":
                 try:
                     self._on_success()
                 except Exception:  # noqa: BLE001 - optional maintenance cannot change refresh result.
                     logger.exception("post-refresh retention check failed")
+
+    def _close_owned_service(self) -> None:
+        """Retry this run's SQLite close on the refresher worker thread."""
+        service = self._service
+        if service is None:
+            return
+
+        def record_failure(error: Exception) -> None:
+            with self._lock:
+                self._cleanup_failed = True
+            logger.warning(
+                "closing the refresh worker catalog failed; retaining it for retry: %s",
+                error,
+            )
+
+        close_owned_resource(service, on_failure=record_failure)
+        with self._lock:
+            self._service = None
+            self._cleanup_failed = False
 
     def _refresh(
         self, service: Any, status: RefreshStatus, source_ids: Sequence[int] | None,

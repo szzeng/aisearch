@@ -24,6 +24,7 @@ from typing import Any
 
 from photo_search.catalog.errors import CatalogError
 from photo_search.ingestion.scanner import ScanInterrupted, is_scan_begin_busy
+from photo_search.runtime.resource_lifecycle import close_owned_resource
 
 logger = logging.getLogger("photo_search.api.runner")
 
@@ -132,7 +133,7 @@ class ScanRunner:
                 self._condition.wait(remaining)
             return True
 
-    def close(self, *, timeout: float = CLOSE_TIMEOUT_SECONDS) -> None:
+    def close(self, *, timeout: float = CLOSE_TIMEOUT_SECONDS) -> bool:
         """Ask the worker to stop without leaving a half-written scan behind."""
         with self._condition:
             self._closed = True
@@ -148,28 +149,37 @@ class ScanRunner:
                 "scan worker still active after %.1fs; leaving its catalog connection open",
                 float(timeout),
             )
-            return
-        service = self._service
-        self._service = None
-        if service is not None:
-            try:
-                service.close()
-            except Exception:  # pragma: no cover - shutdown must not raise
-                logger.debug("closing the scan service failed", exc_info=True)
+            return False
+        with self._condition:
+            return not self._cleanup_failed and self._service is None
 
     # ---------------------------------------------------------------------- worker
     def _loop(self) -> None:
         try:
             self._loop_body()
         finally:
-            # SQLite connections are created on this worker and must close here too.
-            service, self._service = self._service, None
-            if service is not None:
-                try:
-                    service.close()
-                except Exception:
-                    self._cleanup_failed = True
-                    logger.exception("closing the worker catalog failed")
+            self._close_owned_service()
+
+    def _close_owned_service(self) -> None:
+        """Retry the worker-owned SQLite close on the thread that created it."""
+        service = self._service
+        if service is None:
+            return
+
+        def record_failure(error: Exception) -> None:
+            with self._condition:
+                self._cleanup_failed = True
+                self._condition.notify_all()
+            logger.warning(
+                "closing the scan worker catalog failed; retaining it for retry: %s",
+                error,
+            )
+
+        close_owned_resource(service, on_failure=record_failure)
+        with self._condition:
+            self._service = None
+            self._cleanup_failed = False
+            self._condition.notify_all()
 
     def _loop_body(self) -> None:
         succeeded_while_pending = False

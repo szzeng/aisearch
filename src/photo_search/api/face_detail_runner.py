@@ -13,6 +13,8 @@ from collections import deque
 from collections.abc import Callable
 from typing import Any
 
+from photo_search.runtime.resource_lifecycle import close_owned_resource
+
 logger = logging.getLogger("photo_search.api.face_detail_runner")
 
 
@@ -79,7 +81,7 @@ class FaceDetailRunner:
                 lambda: self._active is None and not self._pending, timeout=float(timeout)
             )
 
-    def close(self, *, timeout: float = 5.0) -> None:
+    def close(self, *, timeout: float = 5.0) -> bool:
         with self._condition:
             self._closed = True
             self._pending.clear()
@@ -89,7 +91,7 @@ class FaceDetailRunner:
             thread.join(timeout=float(timeout))
             if thread.is_alive():
                 logger.warning("face-detail worker still active after %.1fs", float(timeout))
-                return
+                return False
         cache = self._engine_cache
         if cache is not None:
             try:
@@ -101,26 +103,42 @@ class FaceDetailRunner:
                 logger.exception("releasing face-detail sessions failed")
             else:
                 self._engine_cache = None
-        service, self._service = self._service, None
-        if service is not None:
-            try:
-                service.close()
-            except Exception:  # pragma: no cover - shutdown must not raise
-                logger.debug("closing the face-detail catalog failed", exc_info=True)
-                self._cleanup_failed = True
+                self._cleanup_failed = False
+        with self._condition:
+            service_still_owned = self._service is not None
+        return (
+            not self._cleanup_failed
+            and not service_still_owned
+            and self._engine_cache is None
+        )
 
     def _loop(self) -> None:
         try:
             self._loop_body()
         finally:
-            # SQLite connections are created on this worker and must close here too.
-            service, self._service = self._service, None
-            if service is not None:
-                try:
-                    service.close()
-                except Exception:
-                    self._cleanup_failed = True
-                    logger.exception("closing the worker catalog failed")
+            self._close_owned_service()
+
+    def _close_owned_service(self) -> None:
+        """Retry the worker-owned SQLite close on the thread that created it."""
+        with self._condition:
+            service = self._service
+        if service is None:
+            return
+
+        def record_failure(error: Exception) -> None:
+            with self._condition:
+                self._cleanup_failed = True
+                self._condition.notify_all()
+            logger.warning(
+                "closing the face-detail worker catalog failed; retaining it for retry: %s",
+                error,
+            )
+
+        close_owned_resource(service, on_failure=record_failure)
+        with self._condition:
+            self._service = None
+            self._cleanup_failed = self._engine_cache is not None
+            self._condition.notify_all()
 
     def _loop_body(self) -> None:
         while True:

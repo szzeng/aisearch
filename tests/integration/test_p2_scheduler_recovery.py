@@ -687,6 +687,219 @@ def test_restart_takes_over_an_expired_lease_and_refuses_the_old_worker(tmp_path
         second_catalog.close()
 
 
+def test_clock_rollback_restart_expires_only_the_future_dated_lease(
+    tmp_path: Path,
+) -> None:
+    from photo_search.runtime.lease_owner import set_app_lease_owner_for_test
+
+    path = db_path(tmp_path)
+    spec = non_model_spec()
+    wall = [1_000]
+    old_owner = "app:" + "a" * 32 + ":"
+    current_owner = "app:" + "b" * 32 + ":"
+    set_app_lease_owner_for_test(old_owner)
+    first_catalog = Catalog.open(
+        path,
+        data_root=data_root(tmp_path),
+        clock=lambda: wall[0],
+        lease_seconds=60,
+    )
+    first = engine.Scheduler(first_catalog, [spec], lease_clock=first_catalog.lease_now_ms)
+    first.record_capability(python_capability(), now_ms=1_000)
+    qualify(first, spec)
+    job_id = enqueue(first_catalog)
+    wall[0] = 100_000
+    stale_request = first.claim_next(worker_id="worker-forward", now_ms=0)
+    assert stale_request is not None and stale_request.job_id == job_id
+    first_catalog.close()
+
+    wall[0] = 1_000
+    set_app_lease_owner_for_test(current_owner)
+    second_catalog = Catalog.open(
+        path,
+        data_root=data_root(tmp_path),
+        clock=lambda: wall[0],
+        lease_seconds=60,
+    )
+    try:
+        with second_catalog.write() as connection:
+            recovered = jobs.recover_clock_rollback_leases(
+                connection,
+                now_ms=second_catalog.lease_now_ms(),
+                app_owner_prefix=current_owner,
+            )
+        assert recovered == [job_id]
+        second = engine.Scheduler(second_catalog, [spec], lease_clock=second_catalog.lease_now_ms)
+        taken = second.claim_next(worker_id="worker-after-rollback", now_ms=0)
+        assert taken is not None and taken.job_id == job_id
+        assert taken.lease_token != stale_request.lease_token
+        row = second_catalog.read_one("SELECT attempts,lease_expires_at FROM jobs WHERE job_id=?", (job_id,))
+        assert row["attempts"] == 1
+        assert row["lease_expires_at"] == 61_000
+
+        late = engine.JobResult.from_envelope(
+            fake_executor()(stale_request.to_envelope())
+        )
+        with pytest.raises(CatalogError) as refused:
+            second.submit(late, now_ms=1_000)
+        assert refused.value.code == STALE_LEASE
+    finally:
+        second_catalog.close()
+        set_app_lease_owner_for_test(None)
+
+
+def test_clock_recovery_leaves_a_normal_future_lease_untouched(tmp_path: Path) -> None:
+    from photo_search.runtime.lease_owner import set_app_lease_owner_for_test
+
+    path = db_path(tmp_path)
+    spec = non_model_spec()
+    wall = [1_000]
+    owner = "app:" + "c" * 32 + ":"
+    set_app_lease_owner_for_test(owner)
+    first_catalog = Catalog.open(
+        path,
+        data_root=data_root(tmp_path),
+        clock=lambda: wall[0],
+        lease_seconds=60,
+    )
+    first = engine.Scheduler(first_catalog, [spec], lease_clock=first_catalog.lease_now_ms)
+    first.record_capability(python_capability(), now_ms=1_000)
+    qualify(first, spec)
+    job_id = enqueue(first_catalog)
+    claimed = first.claim_next(worker_id="worker-live", now_ms=0)
+    assert claimed is not None and claimed.job_id == job_id
+    initial_expiry = first_catalog.read_one(
+        "SELECT lease_expires_at FROM jobs WHERE job_id=?", (job_id,)
+    )["lease_expires_at"]
+    first_catalog.close()
+
+    wall[0] = 2_000
+    second_catalog = Catalog.open(
+        path,
+        data_root=data_root(tmp_path),
+        clock=lambda: wall[0],
+        lease_seconds=60,
+    )
+    try:
+        with second_catalog.write() as connection:
+            assert jobs.recover_clock_rollback_leases(
+                connection,
+                now_ms=second_catalog.lease_now_ms(),
+                app_owner_prefix=owner,
+            ) == []
+        row = second_catalog.read_one("SELECT lease_expires_at FROM jobs WHERE job_id=?", (job_id,))
+        assert row["lease_expires_at"] == initial_expiry
+    finally:
+        second_catalog.close()
+        set_app_lease_owner_for_test(None)
+
+
+def test_clock_recovery_after_restart_while_ahead_expires_old_app_lease(
+    tmp_path: Path,
+) -> None:
+    from photo_search.runtime.lease_owner import set_app_lease_owner_for_test
+
+    path = db_path(tmp_path)
+    spec = non_model_spec()
+    wall = [1_000]
+    old_owner = "app:" + "d" * 32 + ":"
+    current_owner = "app:" + "e" * 32 + ":"
+    set_app_lease_owner_for_test(old_owner)
+    first_catalog = Catalog.open(
+        path,
+        data_root=data_root(tmp_path),
+        clock=lambda: wall[0],
+        lease_seconds=60,
+    )
+    first = engine.Scheduler(first_catalog, [spec], lease_clock=first_catalog.lease_now_ms)
+    first.record_capability(python_capability(), now_ms=1_000)
+    qualify(first, spec)
+    job_id = enqueue(first_catalog)
+    wall[0] = 100_000
+    stale = first.claim_next(worker_id="worker-old-app", now_ms=0)
+    assert stale is not None and stale.job_id == job_id
+    first_catalog.close()
+
+    wall[0] = 101_000
+    set_app_lease_owner_for_test(current_owner)
+    second_catalog = Catalog.open(
+        path,
+        data_root=data_root(tmp_path),
+        clock=lambda: wall[0],
+        lease_seconds=60,
+    )
+    try:
+        with second_catalog.write() as connection:
+            assert jobs.recover_clock_rollback_leases(
+                connection,
+                now_ms=second_catalog.lease_now_ms(),
+                app_owner_prefix=current_owner,
+            ) == []
+        wall[0] = 1_000
+        assert second_catalog.lease_now_ms() == 101_000
+        with second_catalog.write() as connection:
+            connection.execute("UPDATE metadata SET value=value WHERE key='schema_version'")
+        second = engine.Scheduler(second_catalog, [spec], lease_clock=second_catalog.lease_now_ms)
+        taken = second.claim_next(worker_id="worker-current-app", now_ms=0)
+        assert taken is not None and taken.job_id == job_id
+        assert taken.lease_token != stale.lease_token
+    finally:
+        second_catalog.close()
+        set_app_lease_owner_for_test(None)
+
+
+def test_clock_recovery_ignores_current_app_and_unleased_cli_leases(
+    tmp_path: Path,
+) -> None:
+    from photo_search.runtime.lease_owner import set_app_lease_owner_for_test
+
+    path = db_path(tmp_path)
+    spec = non_model_spec()
+    wall = [100_000]
+    owner = "app:" + "f" * 32 + ":"
+    set_app_lease_owner_for_test(owner)
+    catalog = Catalog.open(
+        path,
+        data_root=data_root(tmp_path),
+        clock=lambda: wall[0],
+        lease_seconds=60,
+    )
+    try:
+        scheduler = engine.Scheduler(catalog, [spec], lease_clock=catalog.lease_now_ms)
+        scheduler.record_capability(python_capability(), now_ms=100_000)
+        qualify(scheduler, spec)
+        current_job = enqueue(catalog)
+        current_request = scheduler.claim_next(worker_id="current", now_ms=0)
+        assert current_request is not None and current_request.job_id == current_job
+        assert current_request.lease_token.startswith(owner)
+
+        set_app_lease_owner_for_test(None)
+        cli_job = enqueue(catalog, subject_id="2")
+        with catalog.write() as connection:
+            connection.execute(
+                "UPDATE jobs SET state='RUNNING',lease_token='cli-token',"
+                "lease_expires_at=160000,worker_id='ocr-cli',updated_at=100000 WHERE job_id=?",
+                (cli_job,),
+            )
+        set_app_lease_owner_for_test(owner)
+        wall[0] = 1_000
+        with catalog.write() as connection:
+            assert jobs.recover_clock_rollback_leases(
+                connection,
+                now_ms=1_000,
+                app_owner_prefix=owner,
+            ) == []
+        assert catalog.read_one(
+            "SELECT lease_expires_at FROM jobs WHERE job_id=?", (current_job,)
+        )["lease_expires_at"] == 160_000
+        assert catalog.read_one(
+            "SELECT lease_expires_at FROM jobs WHERE job_id=?", (cli_job,)
+        )["lease_expires_at"] == 160_000
+    finally:
+        catalog.close()
+        set_app_lease_owner_for_test(None)
+
+
 def test_an_expired_lease_without_budget_fails_with_lease_expired(tmp_path: Path) -> None:
     path = db_path(tmp_path)
     spec = non_model_spec()

@@ -25,7 +25,9 @@ from photo_search.api.runner import ScanRunner
 from photo_search.api.session import SessionManager
 from photo_search.api.settings import ApiSettings, generate_session_token
 from photo_search.ingestion.service import CatalogService
+from photo_search.runtime.lease_owner import current_app_lease_owner
 from photo_search.runtime.model_resource_gate import GatedEncoder, ModelResourceGate
+from photo_search.runtime.resource_lifecycle import close_owned_resource
 from photo_search.search.embedding import QueryEncoder
 from photo_search.search.sessions import SearchSessionStore
 
@@ -277,6 +279,39 @@ class ApiContext:
             return False
         finally:
             self._smart_refresh_recovery_lock.release()
+
+    def recover_clock_rollback_after_lock(self) -> list[int]:
+        """Expire only prior-process leases invalidated by a wall-clock rollback.
+
+        This runs after the exclusive data-root lease has proved that this application
+        owns the catalog. Normal future leases remain untouched.
+        """
+        if not self.data_root_lease_held:
+            raise RuntimeError("the data-root lease must be held before clock recovery")
+        service = self._service_factory()
+        try:
+            from photo_search.jobs import queue as jobs
+
+            with service.catalog.write() as connection:
+                recovered = jobs.recover_clock_rollback_leases(
+                    connection,
+                    now_ms=service.catalog.lease_now_ms(),
+                    app_owner_prefix=current_app_lease_owner(),
+                )
+            if recovered:
+                logger.warning(
+                    "expired %d prior-process lease(s) after a wall-clock rollback",
+                    len(recovered),
+                )
+            return recovered
+        finally:
+            close_owned_resource(
+                service,
+                on_failure=lambda error: logger.warning(
+                    "closing the clock-recovery catalog failed; retaining it for retry: %s",
+                    error,
+                ),
+            )
 
     def runner(self) -> ScanRunner:
         """The single background scan executor; it opens its own service/connection."""
@@ -556,147 +591,149 @@ class ApiContext:
                 self._close_running = True
                 retry_now = False
             deferred = bool(self._deferred_cleanup_active)
-            place_cover_warmer = self._place_cover_warmer
-            self._place_cover_warmer = None
         if retry_now:
-            candidate_manager = self._embedding_candidate_manager
-            if candidate_manager is not None:
-                try:
-                    candidate_released = candidate_manager.close()
-                except Exception:
-                    logger.debug("retrying candidate worker cleanup failed", exc_info=True)
-                    candidate_released = False
-                if candidate_released is False:
-                    with self._lifecycle_lock:
-                        self._close_running = False
-                    return False
-                self._embedding_candidate_manager = None
-            return self._finish_shutdown()
+            logger.debug("retrying application shutdown after deferred cleanup")
         if deferred:
             return False
-        memories_runner = self._memories_runner
-        self._memories_runner = None
-        if memories_runner is not None:
+        workers = (
+            ("_memories_runner", self._memories_runner),
+            ("_embedding_candidate_manager", self._embedding_candidate_manager),
+            ("_refresher", self._refresher),
+            ("_face_detail_runner", self._face_detail_runner),
+            ("_retention_cleanup_runner", self._retention_cleanup_runner),
+            ("_photo_smart_refresh_runner", self._photo_smart_refresh_runner),
+            ("_runner", self._runner),
+            ("_place_cover_warmer", self._place_cover_warmer),
+        )
+        retained: list[tuple[str, Any]] = []
+        for attribute, worker in workers:
+            if worker is None:
+                continue
             try:
-                memories_runner.close()
-            except Exception:  # pragma: no cover - shutdown must not fail.
-                logger.debug("stopping the photo memories worker failed", exc_info=True)
-        candidate_manager = self._embedding_candidate_manager
-        candidate_cleanup_failed = False
-        if candidate_manager is not None:
-            try:
-                released = candidate_manager.close()
-            except Exception:  # pragma: no cover - shutdown must release the data-root lease.
-                logger.debug("stopping the embedding candidate builder failed", exc_info=True)
-                candidate_cleanup_failed = True
+                released = worker.close()
+            except Exception:  # noqa: BLE001 - one failure must not skip other workers
+                logger.exception("stopping %s failed", attribute)
+                released = False
+            if released is False or getattr(worker, "_cleanup_failed", False):
+                retained.append((attribute, worker))
             else:
-                if released is False:
-                    candidate_cleanup_failed = True
-                else:
-                    self._embedding_candidate_manager = None
-        if candidate_manager is None or candidate_cleanup_failed:
-            self._embedding_candidate_manager = candidate_manager
-        refresher = self._refresher
-        self._refresher = None
-        if refresher is not None:
-            try:
-                refresher.close()
-            except Exception:  # pragma: no cover - shutdown must not raise
-                logger.debug("stopping the library refresher failed", exc_info=True)
-        face_detail_runner = self._face_detail_runner
-        self._face_detail_runner = None
-        if face_detail_runner is not None:
-            try:
-                face_detail_runner.close()
-            except Exception:  # pragma: no cover - shutdown must not raise
-                logger.debug("stopping the source-detail face runner failed", exc_info=True)
-        retention_runner = self._retention_cleanup_runner
-        self._retention_cleanup_runner = None
-        if retention_runner is not None:
-            try:
-                retention_runner.close()
-            except Exception:  # pragma: no cover - shutdown must not raise
-                logger.debug("stopping the retention cleanup runner failed", exc_info=True)
-        smart_runner = self._photo_smart_refresh_runner
-        self._photo_smart_refresh_runner = None
-        if smart_runner is not None:
-            try:
-                smart_runner.close()
-            except Exception:  # pragma: no cover - shutdown must not raise
-                logger.debug("stopping the smart collection refresh runner failed", exc_info=True)
-        runner = self._runner
-        self._runner = None
-        if runner is not None:
-            try:
-                runner.close()
-            except Exception:  # pragma: no cover - shutdown must not raise
-                logger.debug("stopping the scan runner failed", exc_info=True)
-        if place_cover_warmer is not None:
-            try:
-                place_cover_warmer.close()
-            except Exception:  # pragma: no cover - shutdown must not raise
-                logger.debug("stopping the place-cover warmer failed", exc_info=True)
-        workers = (memories_runner, candidate_manager, refresher, face_detail_runner,
-                   retention_runner, runner, place_cover_warmer)
-        threads = [thread for worker in workers if worker is not None
-                   if isinstance((thread := getattr(worker, "_thread", None)), threading.Thread)
-                   and thread.is_alive()]
-        futures = [future for future in getattr(smart_runner, "_shutdown_futures", ())
-                   if not future.done()]
-        if threads or futures:
-            logger.warning("shutdown incomplete: %d worker(s) still active; retaining data-root lease", len(threads) + len(futures))
-            with self._lifecycle_lock:
-                self._deferred_cleanup_active = True
-            def finish_after_workers() -> None:
-                for thread in threads:
-                    thread.join()
-                for future in futures:
-                    try:
-                        future.result()
-                    except Exception:
-                        logger.debug("smart refresh ended with an error during shutdown", exc_info=True)
-                deferred_cleanup_failed = False
-                for worker in (candidate_manager, refresher, face_detail_runner, runner):
-                    if worker is not None:
-                        try:
-                            if worker.close() is False:
-                                deferred_cleanup_failed = True
-                        except Exception:
-                            logger.exception("deferred worker cleanup failed")
-                            deferred_cleanup_failed = True
-                if deferred_cleanup_failed or any(
-                    getattr(worker, "_cleanup_failed", False)
-                    for worker in workers
-                    if worker is not None
-                ):
-                    logger.error("worker cleanup failed; retaining data-root lease")
-                    with self._lifecycle_lock:
-                        self._deferred_cleanup_active = False
-                        self._close_running = False
-                    return
-                if shutdown_loop is None or shutdown_loop.is_closed():
-                    logger.error("shutdown cleanup needs its owning event loop; retaining data-root lease")
-                    with self._lifecycle_lock:
-                        self._deferred_cleanup_active = False
-                        self._close_running = False
-                    return
-                try:
-                    shutdown_loop.call_soon_threadsafe(self._finish_shutdown)
-                except RuntimeError:
-                    logger.exception("shutdown event loop unavailable; retaining data-root lease")
-                    with self._lifecycle_lock:
-                        self._deferred_cleanup_active = False
-                        self._close_running = False
-            threading.Thread(target=finish_after_workers, name="photo-search-shutdown", daemon=True).start()
+                setattr(self, attribute, None)
+
+        threads = [
+            thread
+            for _, worker in workers
+            if worker is not None
+            if isinstance((thread := getattr(worker, "_thread", None)), threading.Thread)
+            and thread.is_alive()
+        ]
+        futures = [
+            future
+            for _, worker in workers
+            if worker is not None
+            for future in getattr(worker, "_shutdown_futures", ())
+            if not future.done()
+        ]
+        cleanup_failed = bool(retained) or any(
+            getattr(worker, "_cleanup_failed", False)
+            for _, worker in workers
+            if worker is not None
+        )
+        if threads or futures or cleanup_failed:
+            self._defer_cleanup(
+                shutdown_loop,
+                threads=threads,
+                futures=futures,
+                retained=retained,
+            )
             return False
-        if candidate_cleanup_failed or any(
-            getattr(worker, "_cleanup_failed", False) for worker in workers if worker is not None
-        ):
-            logger.error("worker cleanup failed; retaining data-root lease")
+        if self._finish_shutdown():
+            return True
+        self._defer_cleanup(
+            shutdown_loop,
+            threads=(),
+            futures=(),
+            retained=(),
+        )
+        return False
+
+    def _defer_cleanup(
+        self,
+        shutdown_loop: asyncio.AbstractEventLoop | None,
+        *,
+        threads: Any,
+        futures: Any,
+        retained: Any,
+    ) -> None:
+        """Keep the lease until every thread-owned resource is definitely released."""
+        with self._lifecycle_lock:
+            if self._deferred_cleanup_active:
+                return
+            self._deferred_cleanup_active = True
+        if shutdown_loop is None or shutdown_loop.is_closed():
+            logger.error(
+                "shutdown cleanup needs its owning event loop; retaining data-root lease"
+            )
             with self._lifecycle_lock:
+                self._deferred_cleanup_active = False
                 self._close_running = False
-            return False
-        return self._finish_shutdown()
+            return
+
+        def finish_after_workers() -> None:
+            for thread in threads:
+                thread.join()
+            for future in futures:
+                try:
+                    future.result()
+                except Exception:
+                    logger.debug(
+                        "smart refresh ended with an error during shutdown", exc_info=True
+                    )
+            pending = list(retained)
+            while pending:
+                retry: list[tuple[str, Any]] = []
+                for attribute, worker in pending:
+                    try:
+                        released = worker.close()
+                    except Exception:
+                        logger.exception("retrying worker cleanup failed")
+                        released = False
+                    if released is False or getattr(worker, "_cleanup_failed", False):
+                        retry.append((attribute, worker))
+                    else:
+                        setattr(self, attribute, None)
+                pending = retry
+                if pending:
+                    time.sleep(0.1)
+            while True:
+                completed = threading.Event()
+                outcome: list[bool] = []
+
+                def finish_on_owner_thread() -> None:
+                    try:
+                        outcome.append(self._finish_shutdown())
+                    finally:
+                        completed.set()
+
+                try:
+                    shutdown_loop.call_soon_threadsafe(finish_on_owner_thread)
+                except RuntimeError:
+                    logger.exception(
+                        "shutdown event loop unavailable; retaining data-root lease"
+                    )
+                    with self._lifecycle_lock:
+                        self._deferred_cleanup_active = False
+                        self._close_running = False
+                    return
+                completed.wait()
+                if outcome and outcome[0]:
+                    return
+                time.sleep(0.1)
+
+        threading.Thread(
+            target=finish_after_workers,
+            name="photo-search-shutdown",
+            daemon=True,
+        ).start()
 
     def defer_data_root_lease_release(self, lease: Any) -> None:
         """Transfer lease release to the cleanup waiter when shutdown is incomplete."""

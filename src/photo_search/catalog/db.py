@@ -44,6 +44,7 @@ class Catalog:
         #: ``<data_root>/catalog/catalog.db`` is the documented layout; the default keeps
         #: direct constructions (tests, diagnostics) working without an extra argument.
         self.data_root = Path(data_root) if data_root is not None else Path(db_path).parent.parent
+        self._lease_scope_key = str(self.data_root.resolve(strict=False))
         self.clock = clock or system_now_ms
         self.lease_seconds = lease_seconds
         self._lock = threading.RLock()
@@ -109,6 +110,11 @@ class Catalog:
         ``time.monotonic()``.
         """
         observed = int(self.clock())
+        from photo_search.runtime.lease_owner import observe_app_clock
+
+        app_high_water = observe_app_clock(self._lease_scope(), observed)
+        if app_high_water is not None:
+            observed = max(observed, app_high_water)
         with self._lease_clock_lock:
             if self._last_lease_ms is None or observed > self._last_lease_ms:
                 self._last_lease_ms = observed
@@ -130,6 +136,15 @@ class Catalog:
                 raise RuntimeError("catalog write transactions must not be nested")
             if self._in_read_snapshot:
                 raise RuntimeError("a catalog write must not run inside a read snapshot")
+            from photo_search.runtime.lease_owner import (
+                app_clock_rollback_observed,
+                mark_app_clock_rollback_recovered,
+                observe_app_clock,
+            )
+
+            scope = self._lease_scope()
+            observe_app_clock(scope, int(self.clock()))
+            rollback_observed_ms = app_clock_rollback_observed(scope)
             self._in_write = True
             try:
                 begin_started = time.perf_counter()
@@ -160,12 +175,25 @@ class Catalog:
                             ) from error
                         time.sleep(BEGIN_RETRY_BACKOFF_SECONDS * attempts)
                 try:
+                    if rollback_observed_ms is not None:
+                        from photo_search.jobs import queue as jobs
+                        from photo_search.runtime.lease_owner import (
+                            current_app_lease_owner,
+                        )
+
+                        jobs.recover_clock_rollback_leases(
+                            self.connection,
+                            now_ms=int(rollback_observed_ms),
+                            app_owner_prefix=current_app_lease_owner(),
+                        )
                     yield self.connection
                 except BaseException:
                     self._rollback_quietly()
                     raise
                 try:
                     self.connection.execute("COMMIT")
+                    if rollback_observed_ms is not None:
+                        mark_app_clock_rollback_recovered(scope)
                 except sqlite3.Error as error:
                     self._rollback_quietly()
                     raise CatalogError(
@@ -179,6 +207,9 @@ class Catalog:
                     ) from error
             finally:
                 self._in_write = False
+
+    def _lease_scope(self) -> str:
+        return self._lease_scope_key
 
     @contextmanager
     def read_snapshot(self) -> Iterator[sqlite3.Connection]:
@@ -239,14 +270,17 @@ class Catalog:
 
     def close(self) -> None:
         with self._lock:
-            if not self._closed:
-                self._closed = True
-                callbacks, self._close_callbacks = self._close_callbacks, []
-                try:
-                    for callback in reversed(callbacks):
-                        callback()
-                finally:
-                    self.connection.close()
+            if self._closed:
+                return
+            # A callback or connection close may fail. Keep every resource whose release
+            # has not been acknowledged so a later call can retry instead of reporting a
+            # half-closed catalog as complete.
+            while self._close_callbacks:
+                callback = self._close_callbacks[-1]
+                callback()
+                self._close_callbacks.pop()
+            self.connection.close()
+            self._closed = True
 
     def __enter__(self) -> Catalog:
         return self

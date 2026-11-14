@@ -14,6 +14,7 @@ from photo_search.api.files import resolve_present_location
 from photo_search.api.media_generation import generate_one_in_worker
 from photo_search.media.contract import THUMBNAIL
 from photo_search.places import albums as place_albums
+from photo_search.runtime.resource_lifecycle import close_owned_resource
 
 logger = logging.getLogger("photo_search.api.place_cover_warmer")
 
@@ -31,6 +32,8 @@ class PlaceCoverWarmer:
         self._pending = False
         self._running = False
         self._closed = False
+        self._service: Any | None = None
+        self._cleanup_failed = False
         self._thread = threading.Thread(
             target=self._loop, name="photo-search-place-cover-warmer", daemon=True
         )
@@ -57,7 +60,7 @@ class PlaceCoverWarmer:
                 self._condition.wait(timeout=min(remaining, 0.1))
             return True
 
-    def close(self, *, timeout: float = CLOSE_TIMEOUT_SECONDS) -> None:
+    def close(self, *, timeout: float = CLOSE_TIMEOUT_SECONDS) -> bool:
         with self._condition:
             self._closed = True
             self._pending = False
@@ -66,6 +69,9 @@ class PlaceCoverWarmer:
             self._thread.join(timeout=float(timeout))
             if self._thread.is_alive():
                 logger.warning("place-cover warmer is still active after %.1fs", float(timeout))
+                return False
+        with self._condition:
+            return not self._cleanup_failed and self._service is None
 
     def _loop(self) -> None:
         while True:
@@ -86,7 +92,7 @@ class PlaceCoverWarmer:
                     self._condition.notify_all()
 
     def _warm_once(self) -> None:
-        service = self._service_factory()
+        self._service = self._service_factory()
         try:
             seen: set[int] = set()
             targets: list[tuple[str, int]] = []
@@ -94,7 +100,9 @@ class PlaceCoverWarmer:
                 if self._is_closed():
                     return
                 try:
-                    result = place_albums.albums(service.catalog, service.data_root, kind=kind)
+                    result = place_albums.albums(
+                        self._service.catalog, self._service.data_root, kind=kind
+                    )
                     covers = result.get("albums", [])[:COVERS_PER_KIND]
                 except Exception:  # noqa: BLE001 - one category cannot suppress other covers
                     logger.exception("reading %s album covers for pre-generation failed", kind)
@@ -107,7 +115,7 @@ class PlaceCoverWarmer:
                         continue
                     seen.add(asset_id)
                     try:
-                        resolve_present_location(service.catalog, asset_id)
+                        resolve_present_location(self._service.catalog, asset_id)
                         targets.append((kind, asset_id))
                     except ApiError as error:
                         logger.info(
@@ -124,7 +132,9 @@ class PlaceCoverWarmer:
                     max_workers=2, thread_name_prefix="photo-search-place-cover"
                 ) as executor:
                     futures = {
-                        executor.submit(generate_one_in_worker, service, asset_id, THUMBNAIL): (
+                        executor.submit(
+                            generate_one_in_worker, self._service, asset_id, THUMBNAIL
+                        ): (
                             kind,
                             asset_id,
                         )
@@ -150,7 +160,28 @@ class PlaceCoverWarmer:
                             )
             logger.info("place cover warm pass checked %s unique covers", len(seen))
         finally:
-            service.close()
+            self._close_owned_service()
+
+    def _close_owned_service(self) -> None:
+        """Retry the warmer's SQLite close on its owning worker thread."""
+        service = self._service
+        if service is None:
+            return
+
+        def record_failure(error: Exception) -> None:
+            with self._condition:
+                self._cleanup_failed = True
+                self._condition.notify_all()
+            logger.warning(
+                "closing the place-cover worker catalog failed; retaining it for retry: %s",
+                error,
+            )
+
+        close_owned_resource(service, on_failure=record_failure)
+        with self._condition:
+            self._service = None
+            self._cleanup_failed = False
+            self._condition.notify_all()
 
     def _is_closed(self) -> bool:
         with self._condition:

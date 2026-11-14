@@ -24,6 +24,7 @@ from photo_search.api.security import SecurityMiddleware
 from photo_search.api.settings import ApiSettings
 from photo_search.api.web import router as web_router
 from photo_search.runtime.data_root_lease import DataRootLease, acquire_data_root_lease
+from photo_search.runtime.lease_owner import begin_app_lease_owner
 
 __all__ = ["APP_VERSION", "app", "create_app"]
 
@@ -72,6 +73,8 @@ def create_app(
             raise RuntimeError("the startup data-root lease is not live")
         api.set_data_root_lease(lease)
         try:
+            begin_app_lease_owner(str(api.settings.data_root.resolve()))
+            api.recover_clock_rollback_after_lock()
             api.embedding_candidate_manager().recover_after_lock()
             # Once OS ownership proves the prior managed process is gone, old smart work
             # cannot still publish. Database/model work stays lazy and failures are retryable.

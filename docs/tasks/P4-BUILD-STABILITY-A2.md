@@ -544,3 +544,22 @@ DS-H 复核记录见 `test-results/p4-build-stability-a2/ds-h-recheck-review-202
 真实等待 GPU 视觉态由 Node 确定性渲染验证。独立 DS-H 聚焦复核最终 **PASS**，无 P0/P1：多图库计数继承、阶段切换 activity 和 face/OCR 活动周期身份均已修好。C 阶段按显示范围关闭并停止。
 
 真实模型等待时长、GTX 1660 6GB + HDD、真实人脸/OCR 进度、显存峰值与切换归还、原生 200% 缩放仍 PENDING；D 阶段其他关闭重试继续保留。A2 整体不是最终 ACCEPTED。
+
+### 2026-11-14 A2 最终收尾
+
+状态 **CODE_VALIDATED / HARDWARE_PENDING**，独立 DS-H 高推理终审 **REVIEW PASS**，无 P0/P1/P2。
+
+- D：`ApiContext` 与八类后台 Worker 改为成功清理后才清引用；线程自有 SQLite/catalog 在创建线程内重试，单 Worker 失败不阻断其他关闭，未完成资源存在时继续保留数据目录租约。
+- `Catalog.close()` 首次失败后可重试，不把未确认 callback/connection 标记为已关闭。
+- 时钟：应用 lease token 带不透明 owner 前缀，按数据根维护进程内高水位；支持“前跳 → 应用重启且仍在未来 → 回拨 → 下一次写事务恢复”，只回收先前应用 owner 的未来 lease。当前进程和无前缀 CLI lease 不受影响，不增加表、迁移、常驻线程或逐照片写入。
+- 升级边界：修复前已存在且没有 `app:` 前缀的旧应用 lease 不自动回收，以避免误伤未持数据目录租约的 CLI。该边界必须保留在报告中。
+
+验证：
+
+- `d-workers-r4.xml` 10/10；`d-clock-r5.xml` 4/4；`d-affected-r4.xml` 196/196。
+- `scope-cache-affected-r1.xml` 118/118；`ocr-scope-fix-r1.xml` 96/96。
+- `final-bc-affected-r3.xml` 369 项，336 passed / 33 skipped / 0 failed，退出码 0。
+- `final-full-r5.xml` 3853 项，3777 passed / 24 failed / 52 skipped / 0 errors，退出码 1；24 项全部属于历史 26 项集合，新增失败 0，新增 skip 0，两项历史失败消失。
+- Ruff、compileall、Node 语法、`git diff --check` 退出 0。
+
+本机只有 RTX 4060 Laptop 8188 MiB 与 NVMe SSD，未检出目标真实模型权重；GTX 1660 6GB + HDD、真实显存/切换/长时恢复全部 PENDING。A2 不得标 `FINAL_ACCEPTED`。详见[最终报告](../reports/P4-BUILD-STABILITY-A2.md#2026-11-14-a2-最终收尾worker-清理跨重启时钟与-e-回归)。不提交、不推送。

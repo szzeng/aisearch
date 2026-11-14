@@ -246,3 +246,99 @@ OCR 已开始的单张推理允许完成；观察到前台等待后不领取下�
 - 窄屏浏览器只验证到 480×900，不等同原生 200% 缩放。
 - 本轮不改变 A2 最终硬件验收状态。
 - 独立聚焦复核已完成 PASS；C 阶段停止，等待后续安排。
+
+## 2026-11-14 A2 最终收尾：Worker 清理、跨重启时钟与 E 回归
+
+**结论：代码与自动化验收 `CODE_VALIDATED`；目标硬件 `HARDWARE_PENDING`。A2 整体不是 `FINAL_ACCEPTED`。**
+
+基线为 `e998419e099f507817a17e70013bfcca9c81c542`。本轮不提交、不推送；未修改 schema、迁移、任务身份、模型身份、向量维度、搜索阈值、OCR/人脸参数或原始照片。
+
+### 本轮修改及原因
+
+- 新增线程自有资源关闭辅助：只在资源创建线程重试 `close()`，成功后才清除引用和 cleanup 失败标记。失败时该线程留在安全清理边界，不强制终止 Python 线程。
+- `LibraryRefresher`、`FaceDetailRunner`、`ScanRunner`、`CandidateBuildManager`、`MemoriesRunner`、`RetentionCleanupRunner`、`PhotoSmartRefreshRunner`、`PlaceCoverWarmer` 均保留未确认关闭的 Service/Catalog/cache/future；成功关闭重复调用保持幂等。
+- `ApiContext.close()` 改为先成功关闭再清引用；一个 Worker 失败不影响其他 Worker 的安全关闭。线程、Future 或 cleanup failure 存在时保留数据目录租约；事件循环不可用时不得伪造异步完成。
+- `Catalog.close()` 不再在首次失败时标记已关闭：失败的 close callback 和未确认 connection close 保留，后续可重试；已经确认成功的资源不再次释放。
+- 系统时钟新增应用 owner 标记和非持久化数据根高水位。应用管理的 lease token 使用不透明 `app:<owner>:` 前缀；高水位按实际数据根隔离，同一数据根的不同 Worker 连接共享状态。
+- 时钟前跳、应用在仍处未来时重启、随后回拨时，下一次 `Catalog.write()` 在现有事务边界内只回收**先前应用 owner** 的未来 `RUNNING` lease。当前进程 lease 与无 `app:` 前缀的 CLI lease 不改写；不批量改 RUNNING 状态，不增加表、迁移或常驻时钟线程。
+- 数据根 scope 在 `Catalog.__init__()` 缓存，热写路径不重复执行路径解析。正常时钟路径只有进程内锁和整数比较；只有检测到回拨时才执行一次恢复查询。没有每张照片新增写入。
+
+锁顺序仍为前台意图 → 后台模型槽 → `ModelResourceGate` → adapter/Worker 请求串行锁；关闭按相反所有权顺序进行。未发现新增锁顺序反转、递归写事务、强制终止线程或 blanket requeue。
+
+### 数据目录租约与时钟边界
+
+- OS 数据根独占租约保护托管应用、模型管理和存储/备份等会主动取得该租约的路径；直接 scan/OCR/face CLI 不全部取得该租约。
+- 因 CLI 不具备统一数据根所有权证据，本轮不把无 `app:` 前缀 token 当作旧应用租约回收。升级前已存在的无前缀旧应用 lease 也不会被新 owner 逻辑自动回收；这是有意的兼容边界，避免误伤并发 CLI。新版本之后产生的应用 lease 已具备该识别能力。
+- 应用重启后、回拨后的原 token 仍由既有 token/CAS、输入 revision 和过期检查拒绝，不能覆盖新任务。
+
+### 定向测试
+
+- `d-workers-r4.xml`：10 passed / 0 skipped / 0 failed；覆盖 Worker 首次关闭失败后重试、同线程关闭、关闭超时后安全退出、Catalog callback/connection close 重试、单 Worker 失败不影响其他关闭。
+- `d-clock-r5.xml`：4 passed / 0 failed；覆盖正常未来 lease、前跳后回拨再重启、前跳后先重启再回拨、当前应用 lease 与无前缀 CLI lease 隔离。
+- `d-affected-r4.xml`：196 passed / 0 skipped / 0 failed；覆盖生命周期、扫描、刷新、人脸、记忆、智能合集、retention、Worker 进程所有权与调度恢复。
+- `scope-cache-affected-r1.xml`：118 passed / 0 failed；最终 scope 缓存修正后的时钟、OCR 身份和生命周期组合。
+- `ocr-scope-fix-r1.xml`：96 passed / 0 failed；确认数据根隔离修复关闭首次全量暴露的 10 项测试串扰。
+- `final-bc-affected-r3.xml`：369 项，336 passed / 33 skipped / 0 failed / 0 errors，终端退出码 0；覆盖 Qwen/Face/OCR 协调、OCR 领取/续租/提交、30 秒 SQLite 锁恢复、扫描/暂停/恢复/取消和 Windows 子进程生命周期。
+
+### 最终完整回归
+
+- `final-full-r5.xml`：3853 项，3777 passed / 24 failed / 52 skipped / 0 errors，终端退出码 **1**。
+- 24 个失败名称全部存在于历史 `review-full-r1.xml` 的 26 项失败集合；新增失败 **0**。`test_p4_ui2_copy_daily_ux::test_map_and_collection_copy_explain_what_the_count_means` 与 `test_photo_view_info_ui::test_all_photo_pages_load_the_versioned_shared_viewer` 两项历史失败已消失。
+- 部分同名失败的异常文本因历史与当前基线之间的 UI 源码位置/既有文案推进而不同；逐项核对后仍是同一旧 UI/test harness 节点，本轮 diff 不含任何 Web 文件，没有新的产品失败。
+- 52 个 skip 与历史 `review-full-r1.xml` 集合逐一相同：23 项 buffalo_l 人脸权重、19 项 PP-OCRv4 权重、5 项 P0-03 模型资源、2 项 Windows symlink 权限、1 项 GPU opt-in、1 项公开中文地名资源、1 项 collection 条件跳过。没有新增 skip/xfail。
+- `ruff check .`、`compileall`、`node --check src/photo_search/web/app.js`、`node --check src/photo_search/web/photo-info.js`、`git diff --check` 均退出 0。
+
+#### 24 个历史失败的名称与首行原因
+
+| 测试 | 首行失败原因 |
+|---|---|
+| `test_api_frontend::test_frontend_copy_stays_honest_about_time_and_offline_media` | 旧静态文案断言，shell 中不存在“不是 EXIF 拍摄时间” |
+| `test_api_frontend::test_home_loads_rootless_summaries_and_source_scoped_browse` | 旧静态文案断言，shell 中不存在“图库管理与分析明细” |
+| `test_api_frontend::test_source_paths_refresh_after_inflight_source_list_changes[False/True]` | 旧 Node harness：刷新未使路径请求数从 2 变为 3 |
+| `test_api_frontend::test_the_places_page_keeps_the_frozen_place_vocabulary` | 旧 shell 文案“冻结全部结果快照”不存在 |
+| `test_api_frontend::test_the_search_page_states_every_non_success_state_instead_of_downgrading_it` | 旧脚本文案“文本投影仍在追赶”不存在 |
+| `test_api_frontend::test_search_tools_fit_the_sticky_header_and_narrow_layout` | 旧 sticky-header CSS 选择器不存在 |
+| `test_api_frontend::test_the_search_page_keeps_the_selection_by_id_and_never_merges_same_names` | 旧同名人物说明文案不存在 |
+| `test_api_frontend::test_the_search_page_keeps_the_upload_request_free_of_person_fields` | 旧上传搜图说明文案不存在 |
+| `test_api_frontend::test_the_search_page_echoes_the_canonical_person_filter_from_the_server` | 旧 canonical 回显文案不存在 |
+| `test_api_frontend::test_the_search_page_disables_the_person_filter_without_the_person_read_layer` | 旧人物读层提示文案不存在 |
+| `test_api_frontend::test_the_browse_page_states_the_honest_capture_state_and_refusals` | 旧规范拍摄时间回显文案不存在 |
+| `test_api_frontend::test_the_search_page_echoes_the_normalized_capture_condition` | 同上，搜索结果规范时间回显断言 |
+| `test_p4_embedding_default_build::test_first_build_reports_missing_qwen_or_cuda_without_clip_fallback[None/failure1/returns-none]` | `assert 2 == 1`；三参数均为同一旧默认建库期望 |
+| `test_p4_time_contracts::test_adr_records_the_companion_hash_and_every_frozen_companion_is_byte_identical` | `p3-person-search-contracts.v1.json` companion 哈希不一致 |
+| `test_p4_ui2_batch_select_unify::test_place_suggestion_shift_and_loaded_shortcuts_only_change_local_selection` | 旧 Node harness 的选择摘要文案/节点断言 |
+| `test_p4_upgrade_contracts::test_adr_records_the_companion_hash_and_the_earlier_companions_are_untouched` | 同一 `p3-person-search-contracts.v1.json` companion 哈希 |
+| `test_person_sort_ui::test_person_sort_ui_sends_count_order_for_named_unnamed_and_hidden_pages` | 旧 harness 首请求是 `/capabilities`，未匹配 `sort=photos_recent_desc` |
+| `test_person_ux_simplify_ui::test_person_organization_workflows[ignored_refresh]` | 旧 harness 认为进入 ignored faces 未加载识别工具能力 |
+| `test_photo_view_info_ui::test_home_detail_back_restores_browse_and_source_filter` | 旧 DOM stub 缺少 `assetGrid.setAttribute` |
+| `test_photo_view_info_ui::test_full_detail_return_synchronizes_loaded_browse_controls[True/False]` | 旧 DOM stub 中目标 `hidden` 对象为 undefined |
+
+以上节点的完整 `classname::name` 均由脚本与 `review-full-r1.xml` 集合比较，新增失败为 0；消息比较还对临时目录做了归一化。四项消息文本差异分别来自已存在的 UI 文案推进和 `app.js` 行号移动，不是本轮 Web 变更。
+
+### 独立审查
+
+独立 DS-H 高推理只读审查最终 **REVIEW PASS**，无 P0/P1/P2。审查确认：
+
+- 八类 Worker 均在成功关闭后才清引用，SQLite Service 在创建线程内重试；
+- 单个 Worker 失败不阻断其他安全关闭，未完成资源存在时数据目录租约保留；
+- `Catalog.close()` 与 cleanup failure 可重试，无重复释放；
+- “前跳 → 先重启 → 后回拨”已在后续写事务中闭合，当前应用 lease 和 CLI lease 不受影响；
+- 数据根 scope 已缓存，未发现锁顺序反转、递归写事务、blanket requeue、强制终止线程或 B/C 回归。
+
+### 真实硬件验证
+
+本机为 **NVIDIA GeForce RTX 4060 Laptop GPU，8188 MiB，驱动 617.42**，系统磁盘为两块 NVMe SSD；不是任务目标 **GTX 1660 6GB + 机械硬盘**。项目内未检出本轮所需的真实 Qwen/OCR/Face 权重，未访问真实图库或 `catalog.db`。因此真实 Qwen、人脸、OCR GPU、模型切换显存、机械硬盘长时进度、取消/退出/重启和 OOM 余量均 **PENDING**；没有用 Mock、RTX 4060 或 NVMe 代替目标硬件通过。
+
+### A2 验收
+
+| 项目 | 结果 |
+|---|---|
+| B：GPU 资源协调 | 回归通过，无新增问题 |
+| C：进度诊断 | 既有 130/130 与浏览器证据保留，回归通过 |
+| D：Worker 清理 | PASS（受影响 196/196；失败可重试、不提前释放租约） |
+| 时钟安全 | PASS（代码/自动化；含前跳→重启→回拨） |
+| E：自动化回归 | 24 个历史失败、0 新增；完整 JUnit 与退出码已保留 |
+| 独立 DS-H 审查 | REVIEW PASS，无 P0/P1/P2 |
+| GTX 1660 + HDD | PENDING |
+
+**A2 状态：`CODE_VALIDATED / HARDWARE_PENDING`。代码和自动化范围内完成；只有目标硬件真实模型验证完成后才可标 `FINAL_ACCEPTED`。**

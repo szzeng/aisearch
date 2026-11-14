@@ -6,6 +6,7 @@ import base64
 import binascii
 import hashlib
 import json
+import logging
 import secrets
 import threading
 import unicodedata
@@ -13,6 +14,9 @@ from concurrent.futures import Future, ThreadPoolExecutor, wait
 from typing import Any
 
 from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
+from photo_search.runtime.resource_lifecycle import close_owned_resource
+
+logger = logging.getLogger("photo_search.photo_smart_collections")
 
 MAX_NAME = 80
 MAX_CANDIDATES = 5000
@@ -1019,7 +1023,14 @@ class SmartRefreshRunner:
                         pass
                     finally:
                         if heartbeat_service is not None:
-                            heartbeat_service.close()
+                            close_owned_resource(
+                                heartbeat_service,
+                                on_failure=lambda error: logger.warning(
+                                    "closing the smart-refresh heartbeat catalog failed; "
+                                    "retaining it for retry: %s",
+                                    error,
+                                ),
+                            )
 
             heartbeat_thread = threading.Thread(target=heartbeat,
                 name="photo-smart-refresh-lease", daemon=True)
@@ -1104,14 +1115,23 @@ class SmartRefreshRunner:
                 # Application shutdown is bounded and retains its lease while this waits.
                 heartbeat_thread.join()
             if service is not None and owns_service:
-                service.close()
+                close_owned_resource(
+                    service,
+                    on_failure=lambda error: logger.warning(
+                        "closing the smart-refresh worker catalog failed; retaining it "
+                        "for retry: %s",
+                        error,
+                    ),
+                )
 
-    def close(self) -> None:
+    def close(self) -> bool:
         with self._lock:
             self._closed = True
             pending = [(smart_id, dict(task)) for smart_id, task in self._tasks.items()
                        if task.get("future") is not None]
-        self._shutdown_futures = [task["future"] for _, task in pending]
+            known = {id(future): future for future in self._shutdown_futures}
+            known.update({id(task["future"]): task["future"] for _, task in pending})
+            self._shutdown_futures = list(known.values())
         # Future.cancel() can synchronously invoke callbacks. Never call it under _lock.
         for smart_id, task in pending:
             future = task["future"]
@@ -1129,5 +1149,7 @@ class SmartRefreshRunner:
                 except Exception:
                     pass
         self._executor.shutdown(wait=False, cancel_futures=True)
-        if self._shutdown_futures:
-            wait(self._shutdown_futures, timeout=5.0)
+        active = [future for future in self._shutdown_futures if not future.done()]
+        if active:
+            wait(active, timeout=5.0)
+        return all(future.done() for future in self._shutdown_futures)

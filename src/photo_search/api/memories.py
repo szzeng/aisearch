@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import datetime as dt
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -20,8 +21,11 @@ from photo_search.catalog.sqlite_io import open_readonly
 from photo_search.catalog.video import photo_asset_sql
 from photo_search.favorites import _revision as favorites_revision
 from photo_search.places.revision import read_filter_revision
+from photo_search.runtime.resource_lifecycle import close_owned_resource
 from photo_search.taken_time import contract
 from photo_search.taken_time import read as taken_time_read
+
+logger = logging.getLogger("photo_search.api.memories")
 
 ALGORITHM_VERSION = "memories-v1"
 MAX_CACHE_ENTRIES = 32
@@ -265,6 +269,7 @@ class MemoriesRunner:
         self._cancelled: threading.Event | None = None
         self._connection: sqlite3.Connection | None = None
         self._closed = False
+        self._cleanup_failed = False
         self._revision: tuple[Any, ...] | None = None
         self._today: dt.date | None = None
         self._next_year: int | None = None
@@ -560,8 +565,20 @@ class MemoriesRunner:
             self._remember((today.isoformat(), memory_type, int(year), *revision, ALGORITHM_VERSION), value)
             return "COMPLETE"
         finally:
-            self._connection = None
-            catalog.close()
+            def record_failure(error: Exception) -> None:
+                with self._condition:
+                    self._cleanup_failed = True
+                    self._condition.notify_all()
+                logger.warning(
+                    "closing the memories worker connection failed; retaining it for retry: %s",
+                    error,
+                )
+
+            close_owned_resource(catalog, on_failure=record_failure)
+            with self._condition:
+                self._connection = None
+                self._cleanup_failed = False
+                self._condition.notify_all()
 
     def _loop(self) -> None:
         deferred_delay = 0.25
@@ -647,7 +664,7 @@ class MemoriesRunner:
                             self._condition.notify_all()
                     deferred_delay = min(deferred_delay * 2, 1.5)
 
-    def close(self, *, timeout: float = 3.0) -> None:
+    def close(self, *, timeout: float = 3.0) -> bool:
         with self._condition:
             self._closed = True
             if self._cancelled is not None:
@@ -662,6 +679,8 @@ class MemoriesRunner:
                 pass
         catalog_reads.wake_foreground_idle(self.catalog)
         self._thread.join(timeout=timeout)
+        with self._condition:
+            return not self._thread.is_alive() and not self._cleanup_failed
 
 
 def _all_range_end(today: dt.date, year: int, memory_type: str) -> str:

@@ -9,6 +9,7 @@ from collections.abc import Callable
 from typing import Any
 
 from photo_search.catalog.errors import CatalogError
+from photo_search.runtime.resource_lifecycle import close_owned_resource
 
 logger = logging.getLogger("photo_search.api.retention")
 MAX_RUN_ASSETS = 20
@@ -27,6 +28,8 @@ class RetentionCleanupRunner:
         self._active_run_id: str | None = None
         self._pending_run_id: str | None = None
         self._closed = False
+        self._service: Any | None = None
+        self._cleanup_failed = False
         self._stop_requested = threading.Event()
 
     def start(self, run_id: str) -> bool:
@@ -49,7 +52,7 @@ class RetentionCleanupRunner:
             self._thread.start()
             return True
 
-    def close(self, *, timeout: float = 5.0) -> None:
+    def close(self, *, timeout: float = 5.0) -> bool:
         with self._lock:
             self._closed = True
             self._stop_requested.set()
@@ -58,6 +61,9 @@ class RetentionCleanupRunner:
             thread.join(timeout=max(0.0, float(timeout)))
             if thread.is_alive():
                 logger.warning("retention worker still active after %.1fs", float(timeout))
+                return False
+        with self._lock:
+            return not self._cleanup_failed and self._service is None
 
     def _run(self, run_id: str) -> None:
         current = str(run_id)
@@ -78,10 +84,9 @@ class RetentionCleanupRunner:
                 self._active_run_id = pending
 
     def _run_one(self, run_id: str) -> None:
-        service = None
         try:
-            service = self._service_factory()
-            catalog = service.catalog
+            self._service = self._service_factory()
+            catalog = self._service.catalog
             from photo_search.library_retention import _run_has_unsettled_work
 
             with catalog.write() as connection:
@@ -207,19 +212,37 @@ class RetentionCleanupRunner:
                 settle_library_retention_run_batch(catalog, run_id=run_id)
         except Exception:  # noqa: BLE001 - leave current batch durable and resumable.
             logger.exception("retention cleanup run failed", extra={"run_id": run_id})
-            if service is not None:
+            if self._service is not None:
                 try:
-                    with service.catalog.write() as connection:
+                    with self._service.catalog.write() as connection:
                         connection.execute(
                             "UPDATE library_retention_runs SET state='PARTIAL',stage='可恢复待继续',"
                             "has_more_candidates=1,last_error='worker failure',updated_at_ms=? WHERE run_id=?",
-                            (int(service.catalog.now_ms()), run_id),
+                            (int(self._service.catalog.now_ms()), run_id),
                         )
                 except Exception:
                     logger.exception("could not persist retention worker failure")
         finally:
-            if service is not None:
-                service.close()
+            self._close_owned_service()
+
+    def _close_owned_service(self) -> None:
+        """Retry the retention run's SQLite close on its worker thread."""
+        service = self._service
+        if service is None:
+            return
+
+        def record_failure(error: Exception) -> None:
+            with self._lock:
+                self._cleanup_failed = True
+            logger.warning(
+                "closing the retention worker catalog failed; retaining it for retry: %s",
+                error,
+            )
+
+        close_owned_resource(service, on_failure=record_failure)
+        with self._lock:
+            self._service = None
+            self._cleanup_failed = False
 
     @classmethod
     def _retry_or_fail(cls, catalog: Any, run_id: str, asset_id: int, attempt: int, reason: str) -> None:
