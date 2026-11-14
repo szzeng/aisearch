@@ -253,7 +253,12 @@ def coverage(catalog: Catalog) -> dict[str, Any]:
 
 
 def build_scheduler(catalog: Catalog, spec: Any) -> scheduler_engine.Scheduler:
-    return scheduler_engine.Scheduler(catalog, [spec], lease_seconds=catalog.lease_seconds)
+    return scheduler_engine.Scheduler(
+        catalog,
+        [spec],
+        lease_seconds=catalog.lease_seconds,
+        lease_clock=catalog.lease_now_ms,
+    )
 
 
 def record_runtime_evidence(

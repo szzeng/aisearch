@@ -39,6 +39,7 @@ from photo_search.runtime.background_slot import (
     BackgroundSlotBusy,
     BackgroundSlotCancelled,
     background_model_slot,
+    foreground_model_waiting,
 )
 from photo_search.runtime.device import CPU_PROVIDER, CUDA_PROVIDER
 from photo_search.runtime.machine_model_slot import MachineModelSlot
@@ -296,7 +297,12 @@ def pending_job_count(catalog: Catalog) -> int:
 
 
 def build_scheduler(catalog: Catalog, spec: Any) -> scheduler_engine.Scheduler:
-    return scheduler_engine.Scheduler(catalog, [spec], lease_seconds=catalog.lease_seconds)
+    return scheduler_engine.Scheduler(
+        catalog,
+        [spec],
+        lease_seconds=catalog.lease_seconds,
+        lease_clock=catalog.lease_now_ms,
+    )
 
 
 def seal_snapshot(
@@ -434,6 +440,7 @@ def run_queue(
     automatic_detail: bool = False,
     job_ids: Sequence[int] | None = None,
     claim_check: Callable[[], bool] | None = None,
+    release_semantic_worker: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Drain the runnable face jobs; bounded, single-threaded, no sleeping."""
     spec = face_processor_spec(
@@ -445,6 +452,10 @@ def run_queue(
         return {"steps": 0, "jobs": job_counts(catalog, task_type=spec.task_type),
                 "pending_jobs": pending_job_count(catalog), "reason": "NO_CLAIM_ALLOWED"}
     cache = engine_cache or FaceEngineCache()
+    if release_semantic_worker is not None and str(device) != "cpu":
+        # The decorator already owns the shared execution slot, so a foreground only
+        # needs to finish its current encode before the semantic child is stopped.
+        release_semantic_worker()
     evidence = record_runtime_evidence(
         scheduler,
         spec,
@@ -469,6 +480,10 @@ def run_queue(
         if claim_check is not None and not claim_check():
             break
         if cancel is not None and cancel():
+            break
+        # A foreground search may finish the current face image, but this worker does
+        # not claim another image while that request is waiting for the shared slot.
+        if foreground_model_waiting():
             break
         if not scheduler.run_once(executor, worker_id=worker_id, now_ms=catalog.now_ms()):
             break

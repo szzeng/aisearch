@@ -60,6 +60,7 @@ class LibraryRefresher:
         enrich: bool = True,
         executor: Callable[[Any, RefreshStatus, Sequence[int] | None], dict[str, Any]]
         | None = None,
+        encoder_release: Callable[[], None] | None = None,
         now_ms: Callable[[], int] | None = None,
         on_success: Callable[[], None] | None = None,
         name: str = "photo-search-refresh",
@@ -73,6 +74,7 @@ class LibraryRefresher:
         self._batch_size = int(batch_size)
         self._enrich = bool(enrich)
         self._executor = executor
+        self._encoder_release = encoder_release
         self._now_ms = now_ms or (lambda: time.time_ns() // 1_000_000)
         self._on_success = on_success
         self._name = str(name)
@@ -258,6 +260,7 @@ class LibraryRefresher:
             mode=mode,
             face_profile=face_profile,
             cancel_check=self._cancel.is_set,
+            encoder_release=self._encoder_release,
         )
 
     # -------------------------------------------------------------------- internals

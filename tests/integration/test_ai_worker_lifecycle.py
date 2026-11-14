@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from photo_search.runtime.device import PROVIDER_OVERRIDE_ENV
-from photo_search.workers.client import AiWorkerClient, WorkerError
+from photo_search.workers.client import AiWorkerClient, WorkerError, WorkerShutdownError
 
 COLD_START_TIMEOUT_SECONDS = 900.0
 CPU_WORKER_TIMEOUT_SECONDS = 600.0
@@ -100,6 +100,29 @@ def test_shutdown_without_start_removes_stderr_file(tmp_path: Path) -> None:
     assert stderr_path.exists()
     worker.shutdown()
     assert not stderr_path.exists()
+
+
+def test_failed_client_shutdown_is_retryable(tmp_path: Path, monkeypatch) -> None:
+    worker = AiWorkerClient(tmp_path / "model", tmp_path / "manifest.json", device="cpu")
+    real_close = worker._close_queues
+    attempts = 0
+
+    def fail_once():
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return [OSError("synthetic queue close failure")]
+        return real_close()
+
+    monkeypatch.setattr(worker, "_close_queues", fail_once)
+    with pytest.raises(WorkerShutdownError):
+        worker.shutdown()
+    assert worker._shutdown_complete is False
+    assert worker._requests is not None and worker._responses is not None
+
+    worker.shutdown()
+    assert worker._shutdown_complete is True
+    assert attempts == 2
 
 
 def test_explicit_cpu_worker_reports_the_degradation(model_dir: Path, manifest: Path) -> None:

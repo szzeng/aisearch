@@ -685,6 +685,7 @@ def build_index(
     device_policy: str = "cpu_allowed",
     worker_id: str = "semantic-build",
     retry_failed: bool = False,
+    yield_to_foreground: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Build (or extend) the semantic index of one catalog with the pinned model.
 
@@ -720,7 +721,12 @@ def build_index(
             },
         )
     refuse_orphan_generation_table(catalog, space_id=space_id, processor_id=str(spec.processor_id))
-    scheduler = scheduler_engine.Scheduler(catalog, [spec], lease_seconds=catalog.lease_seconds)
+    scheduler = scheduler_engine.Scheduler(
+        catalog,
+        [spec],
+        lease_seconds=catalog.lease_seconds,
+        lease_clock=catalog.lease_now_ms,
+    )
     evidence = record_runtime_evidence(scheduler, spec, facts, now_ms=facts_observed_at)
     scheduler.capability_revision = str(evidence["capability_revision"])
     selection = semantic_selection(
@@ -747,7 +753,11 @@ def build_index(
         processor_id=str(spec.processor_id),
     )
     steps = 0
-    while scheduler.run_once(executor, worker_id=str(worker_id), now_ms=catalog.now_ms()):
+    while not (yield_to_foreground is not None and yield_to_foreground()):
+        if not scheduler.run_once(
+            executor, worker_id=str(worker_id), now_ms=catalog.now_ms()
+        ):
+            break
         steps += 1
         if len(targets) and steps >= len(targets):
             break

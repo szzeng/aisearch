@@ -146,6 +146,7 @@ class WorkerQueryEncoder:
         self._client = client
         self._spec = spec
         self._closed = False
+        self._closing = False
         #: Health, inference and shutdown share one request/reply channel. Every client
         #: call must hold this lock so a background build cannot consume a search reply.
         self._lock = threading.Lock()
@@ -163,7 +164,7 @@ class WorkerQueryEncoder:
         which is what lets the refresh embed new content in exactly the space the query path
         already serves (P4-02Y §6C).
         """
-        with self._lock:
+        with self._gpu_resource(), self._lock:
             self._require_open()
             reply = self._client.health(timeout=COLD_START_TIMEOUT_SECONDS)
         if not isinstance(reply, dict):
@@ -201,12 +202,17 @@ class WorkerQueryEncoder:
         return self._vector(self._worker_image(image), self._dimension(), "image")
 
     def close(self) -> None:
-        """Stop once, after the in-flight request leaves the shared channel."""
+        """Stop after the in-flight request leaves; a failed shutdown remains retryable."""
         with self._lock:
             if self._closed:
                 return
+            self._closing = True
+            try:
+                self._client.shutdown()
+            except BaseException:
+                raise
             self._closed = True
-            self._client.shutdown()
+            self._closing = False
 
     # --------------------------------------------------------------------- internals
     def _dimension(self) -> int:
@@ -214,15 +220,15 @@ class WorkerQueryEncoder:
 
     def _require_open(self) -> None:
         """Refuse a closed channel while holding the same lock as its shutdown."""
-        if self._closed:
+        if self._closed or self._closing:
             raise CatalogError(
                 RUNTIME_CAPABILITY_UNAVAILABLE,
-                "the AI worker channel is closed",
-                details={"reason": "WORKER_CLOSED"},
+                "the AI worker channel is closing or closed",
+                details={"reason": "WORKER_CLOSING" if self._closing else "WORKER_CLOSED"},
             )
 
     def _worker_text(self, text: str) -> Any:
-        with self._lock:
+        with self._gpu_resource(), self._lock:
             self._require_open()
             return self._client.encode_text(text)
 
@@ -231,15 +237,28 @@ class WorkerQueryEncoder:
         # Explicit PIL inputs use a private temporary PNG, removed before returning.
         save = getattr(image, "save", None)
         if not callable(save):
-            with self._lock:
+            with self._gpu_resource(), self._lock:
                 self._require_open()
                 return self._client.encode_image(Path(image))
         with tempfile.TemporaryDirectory(prefix="photo-search-query-") as raw:
             path = Path(raw) / "query.png"
             save(str(path), "PNG")
-            with self._lock:
+            with self._gpu_resource(), self._lock:
                 self._require_open()
                 return self._client.encode_image(path)
+
+    def _gpu_resource(self) -> Any:
+        """Guard direct adapter calls; nesting inside GatedEncoder stays reentrant."""
+        if not self.requires_gpu_slot:
+            return nullcontext()
+        from photo_search.runtime.background_slot import (
+            background_model_slot,
+            background_slot_owned_by_current_thread,
+        )
+
+        if background_slot_owned_by_current_thread():
+            return nullcontext()
+        return background_model_slot()
 
     def _vector(self, reply: Any, dimension: int, what: str) -> list[float]:
         raw = reply.get("vector") if isinstance(reply, Mapping) else None

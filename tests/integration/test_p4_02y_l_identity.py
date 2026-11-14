@@ -795,10 +795,12 @@ def test_expired_gpu_submission_preserves_the_previous_current_result(
     )
     assert request is not None
     raw = ocr_executor(harness.catalog, engine_cache=FakeEngineCache())(request.to_envelope())
+    # The lease clock, not an unrelated caller timestamp, decides expiry.
+    harness.clock.advance(61_000)
     with pytest.raises(CatalogError) as error:
         scheduler.submit(
             JobResult.from_envelope(raw),
-            now_ms=harness.clock() + 61_000,
+            now_ms=0,
         )
     assert error.value.code == STALE_LEASE
     assert dict(harness.ocr_document(asset_id)) == previous
@@ -984,6 +986,50 @@ def test_ocr_queue_uses_live_submission_clock(harness: Any, monkeypatch: Any) ->
     assert error.value.code == STALE_LEASE
     assert jobs_for(harness, asset_id)[contract.OCR_CPU_PROCESSOR_ID]["state"] == "RUNNING"
     assert harness.ocr_document(asset_id) is None
+
+
+def test_ocr_claim_heartbeat_and_submit_share_nondecreasing_lease_clock(
+    harness: Any, monkeypatch: Any
+) -> None:
+    asset_id = make_asset(harness, "lease-clock-domain.jpg")
+    enqueue(harness, asset_id, device="cpu")
+    install_runtime_evidence(monkeypatch)
+    scheduler = ocr_service.build_scheduler(harness.catalog)
+    scheduler.lease_seconds = 10
+    ocr_service.record_runtime_evidence(
+        scheduler,
+        scheduler.spec_for(contract.OCR_CPU_PROCESSOR_ID),
+        FakeEngineCache(),
+        data_root=harness.data_root,
+        now_ms=harness.clock(),
+        note="lease clock domain",
+    )
+    request = scheduler.claim_next(worker_id="clock-owner", now_ms=harness.clock())
+    assert request is not None
+    first_expiry = jobs_for(harness, asset_id)[contract.OCR_CPU_PROCESSOR_ID][
+        "lease_expires_at"
+    ]
+
+    # A caller-provided future instant cannot shorten or replace the task's clock.
+    harness.clock.advance(1_000)
+    renewed = scheduler.heartbeat(
+        job_id=request.job_id,
+        lease_token=request.lease_token,
+        worker_id="clock-owner",
+        now_ms=harness.clock() + 86_400_000,
+    )
+    assert renewed.lease_expires_at == first_expiry + 1_000
+
+    # A backwards correction freezes the persisted lease source rather than making
+    # an old result look new.
+    harness.clock.advance(-5_000)
+    frozen = scheduler.heartbeat(
+        job_id=request.job_id,
+        lease_token=request.lease_token,
+        worker_id="clock-owner",
+        now_ms=0,
+    )
+    assert frozen.lease_expires_at == renewed.lease_expires_at
 
 
 def test_cpu_probe_preserves_other_device_observation_without_loading_gpu(
@@ -2238,12 +2284,74 @@ def test_foreground_during_gpu_probe_does_not_report_false_completion(
         assert not worker.is_alive()
         assert len(outcomes) == 1 and isinstance(outcomes[0], dict)
         assert outcomes[0]["steps"] == 1
-        assert jobs_for(harness, asset)[contract.OCR_GPU_PROCESSOR_ID]["state"] == "SUCCEEDED"
     finally:
         release_probe.set()
         worker.join(5)
         if frontend.ident is not None:
             frontend.join(5)
+
+
+def test_serial_foreground_requests_resume_ocr_without_permanent_starvation(
+    harness: Any, monkeypatch: Any
+) -> None:
+    import threading
+    import time
+
+    from photo_search.face import service as face_service
+    from photo_search.runtime.background_slot import foreground_model_slot
+
+    assets = []
+    for index in range(2):
+        name = f"foreground-recovery-{index}.jpg"
+        Image.new("RGB", (220 + index, 120), "white").save(harness.library / name, "JPEG")
+        harness.scan()
+        assets.append(harness.asset_id(name))
+        enqueue(harness, assets[-1], device="gpu")
+    install_runtime_evidence(monkeypatch)
+    monkeypatch.setattr(face_service, "BACKGROUND_MODEL_SLOT", threading.RLock())
+
+    for index, asset in enumerate(assets):
+        entered, release = threading.Event(), threading.Event()
+
+        def foreground() -> None:
+            with foreground_model_slot():
+                entered.set()
+                assert release.wait(5)
+
+        front = threading.Thread(target=foreground, name=f"foreground-{index}", daemon=True)
+        front.start()
+        assert entered.wait(3)
+        outcome = []
+        def run_ocr() -> None:
+            try:
+                from photo_search.catalog.db import Catalog
+
+                with Catalog.open(data_root=harness.data_root, clock=harness.clock) as catalog:
+                    outcome.append(
+                        ocr_service.run_queue(
+                            catalog,
+                            data_root=harness.data_root,
+                            engine_cache=FakeEngineCache(),
+                            limit=1,
+                        )
+                    )
+            except Exception as error:
+                outcome.append(error)
+
+        ocr = threading.Thread(
+            target=run_ocr,
+            name=f"ocr-after-foreground-{index}",
+            daemon=True,
+        )
+        ocr.start()
+        time.sleep(0.2)
+        assert jobs_for(harness, asset)[contract.OCR_GPU_PROCESSOR_ID]["state"] == "QUEUED"
+        release.set()
+        front.join(5)
+        ocr.join(5)
+        assert not front.is_alive() and not ocr.is_alive()
+        assert outcome and outcome[0]["steps"] == 1
+        assert jobs_for(harness, asset)[contract.OCR_GPU_PROCESSOR_ID]["state"] == "SUCCEEDED"
 
 
 def test_conflicting_equal_timestamp_gpu_observation_is_refused(harness: Any, monkeypatch: Any) -> None:

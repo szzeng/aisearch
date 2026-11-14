@@ -1,6 +1,6 @@
 ## Current task: P4-BUILD-STABILITY-A2（2026-11-12）
 
-**PAUSED / IMPLEMENTATION PARTIAL / VALIDATION PENDING**：用户要求暂停、提交并推送当前 A2 工作。GPU OCR 领取前许可、CPU 独立、租约与取消保护、跨页缓存等已部分实现；全量首轮 3780 项有 33 失败、52 跳过，后续受影响回归及未取得退出码的 JUnit 详见报告。AI 子进程异常退出、显存驻留、多进程公平与时钟域仍未闭合；阶段 B、进度诊断、关闭重试、最终独审及 GTX 1660 + HDD 验证均 PENDING。详见[任务卡](tasks/P4-BUILD-STABILITY-A2.md)和[报告](reports/P4-BUILD-STABILITY-A2.md)。
+**B CODE CONVERGED / AUTOMATED + WINDOWS PROCESS PASS / TARGET HARDWARE + INDEPENDENT REVIEW PENDING**：基于 `5fc7b73` 续做，已用 Windows Job Object + 启动门绑定 AI 子进程生命周期，统一 GPU 直接入口许可，保持 OCR GPU 主路径，在语义/人脸/OCR 间建立模型族串行边界，统一生产任务租约时钟，并修复 Worker/Context 关闭失败重试。真实父进程强杀后 child 退出与 GPU Mutex 释放、child 异常退出、串行前台后 OCR 恢复、时钟回拨/未来时间、CPU OCR 独立及关闭重试均有测试。受影响 JUnit 382 项为 376 passed / 6 skipped / 0 failed，退出 0；终轮全量 3827 项为 3749 passed / 26 failed / 52 skipped / 0 errors，退出 1，26 个失败与历史 33 失败中的同名项完全一致且本轮无新增失败。当前无模型权重且无 GTX 1660 + HDD，真实显存/切换/长时恢复及独立 DS-H 全受影响面审查仍 PENDING；阶段 C/D/E 不开始，A2 不是最终 ACCEPTED。详见[任务卡](tasks/P4-BUILD-STABILITY-A2.md)和[报告](reports/P4-BUILD-STABILITY-A2.md)。
 
 ## Previous task: P4-BUILD-STABILITY-A（2026-11-12）
 

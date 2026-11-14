@@ -752,6 +752,23 @@ class FaceEngineCache:
         with self._lock:
             return self._device_locks.setdefault(cache_key, threading.RLock())
 
+    def release_sessions(self) -> None:
+        """Drop every engine reference before the next model family starts.
+
+        RapidOCR/InsightFace expose no portable VRAM-release acknowledgement. This
+        method therefore records only what the product can prove: this process no
+        longer owns the sessions. Real provider memory release remains a hardware
+        measurement, not an assumption used for concurrent execution.
+        """
+        with self._lock:
+            engines = tuple(self._engines.values())
+            self._engines.clear()
+            self._attempts.clear()
+        for engine in engines:
+            close = getattr(engine, "close", None)
+            if callable(close):
+                close()
+
     def engine(self, data_root: str | Path | None = None, *, device: str = "auto") -> FaceEngine:
         """Reuse a device session; its reason describes the request that created it.
 

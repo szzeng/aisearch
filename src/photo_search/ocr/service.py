@@ -552,7 +552,12 @@ def record_runtime_evidence(
 def build_scheduler(catalog: Catalog, spec: Any = None) -> scheduler_engine.Scheduler:
     del spec  # kept as a source-compatible optional argument for existing callers
     specs = (ocr_processor_spec("cpu"), ocr_processor_spec("gpu"))
-    return scheduler_engine.Scheduler(catalog, specs, lease_seconds=catalog.lease_seconds)
+    return scheduler_engine.Scheduler(
+        catalog,
+        specs,
+        lease_seconds=catalog.lease_seconds,
+        lease_clock=catalog.lease_now_ms,
+    )
 
 
 def _eligible_gpu_fallback_code(code: str, state: str, blocking_reason: str | None) -> bool:
@@ -723,8 +728,18 @@ def run_queue(
     """Drain the runnable OCR jobs; bounded, single-threaded, no sleeping."""
     reconcile_retired_ocr_jobs(catalog, now_ms=catalog.now_ms())
     cpu_spec, gpu_spec = ocr_processor_spec("cpu"), ocr_processor_spec("gpu")
-    cpu_scheduler = scheduler_engine.Scheduler(catalog, [cpu_spec], lease_seconds=catalog.lease_seconds)
-    gpu_scheduler = scheduler_engine.Scheduler(catalog, [gpu_spec], lease_seconds=catalog.lease_seconds)
+    cpu_scheduler = scheduler_engine.Scheduler(
+        catalog,
+        [cpu_spec],
+        lease_seconds=catalog.lease_seconds,
+        lease_clock=catalog.lease_now_ms,
+    )
+    gpu_scheduler = scheduler_engine.Scheduler(
+        catalog,
+        [gpu_spec],
+        lease_seconds=catalog.lease_seconds,
+        lease_clock=catalog.lease_now_ms,
+    )
     selected_assets = None if asset_ids is None else tuple(sorted({int(value) for value in asset_ids}))
     cache = engine_cache or OcrEngineCache()
     resolved_data_root = data_root if data_root is not None else catalog.data_root

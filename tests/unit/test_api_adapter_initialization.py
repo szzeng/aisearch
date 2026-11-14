@@ -246,3 +246,30 @@ def test_filter_only_search_does_not_advertise_gpu_intent(monkeypatch):
     monkeypatch.setattr(routes, "search_request", lambda *_args, **_kwargs: {"ok": True})
     request = SearchRequest(request_id="filter-only", text=None, retrieval_mode="combined")
     assert routes._search_request_worker(None, request, context=context) == {"ok": True}
+
+
+def test_context_close_retains_encoder_after_failure_and_retries(tmp_path):
+    class Adapter:
+        def __init__(self):
+            self.calls = 0
+
+        def close(self):
+            self.calls += 1
+            if self.calls == 1:
+                raise OSError("synthetic close failure")
+
+    adapter = Adapter()
+    context = ApiContext(
+        ApiSettings(data_root=tmp_path), encoder_factory=lambda: adapter
+    )
+    assert context.query_encoder() is not None
+    assert context._encoder is adapter
+
+    assert context.close() is False
+    assert context._encoder is adapter
+    assert context._shutdown_complete.is_set() is False
+
+    assert context.close() is True
+    assert context._encoder is None
+    assert adapter.calls == 2
+    assert context._shutdown_complete.is_set() is True

@@ -27,6 +27,7 @@ from photo_search.media import heif as media_heif
 from photo_search.models.embedding.base import CLIP_ADAPTER, provider_block, read_manifest
 from photo_search.models.embedding.factory import load_adapter
 from photo_search.runtime.device import DevicePolicy, DeviceUnavailableError
+from photo_search.runtime.process_ownership import process_is_alive
 from photo_search.workers.protocol import ProtocolError, checked_message, error_message
 
 DEMO_QUERY = "红色的图片"
@@ -79,8 +80,12 @@ def run_worker(
     stderr_path: str,
     device: str | None = None,
     device_policy: str = DevicePolicy.CPU_ALLOWED.value,
+    start_gate: Any | None = None,
+    parent_pid: int | None = None,
 ) -> None:
     """Service bounded requests until a shutdown request or unrecoverable transport error."""
+    if not _wait_for_owner(start_gate, parent_pid):
+        return
     completed_steps: list[str] = []
     failure_details: dict[str, Any] = {
         "requested_device": device,
@@ -144,6 +149,16 @@ def run_worker(
                 )
             except Exception:
                 pass
+
+
+def _wait_for_owner(start_gate: Any | None, parent_pid: int | None) -> bool:
+    """Do not import or load a model before the parent has assigned the job object."""
+    if start_gate is None:
+        return True
+    while not start_gate.wait(0.1):
+        if parent_pid is not None and not process_is_alive(int(parent_pid)):
+            return False
+    return True
 
 
 def _error_details(error: BaseException, adapter: Any) -> dict[str, Any]:

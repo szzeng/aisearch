@@ -494,3 +494,17 @@ PHASE A REVIEWED / IMPLEMENTATION PENDING：核实 OCR GPU 探测与执行未协
 ### 2026-11-14 用户暂停及提交
 
 状态 **PAUSED / IMPLEMENTATION PARTIAL / VALIDATION PENDING**：按用户要求保存当前工作并推送，不表示完成或发布。GPU 领取前过滤、直接调度续租、分页与取消已部分实现；异常退出子进程、显存驻留、多前台公平及显式未来时钟与心跳不一致仍未闭合。全量原始失败、最新 JUnit 及缺失终端退出码如实记录在[报告](../reports/P4-BUILD-STABILITY-A2.md)。阶段 B、C/D/E、最终 Terra 高推理复查及 GTX 1660/HDD 均 PENDING。
+
+### 2026-11-14 B 阶段续做结果
+
+状态 **B CODE CONVERGED / AUTOMATED + WINDOWS PROCESS PASS / TARGET HARDWARE + INDEPENDENT REVIEW PENDING**。
+
+- GPU 所有权固定为“实际执行进程/线程持许可以下运行，父进程对 spawn 子进程承担 OS 级所有权”：AI Worker 启动门 + Windows Job Object；父进程正常关闭先停 child 再释放槽，父进程强杀由 Job Object 结束 child，child 异常退出立即被父端发现。
+- OCR 保持 GPU 主路径，不再引入因模型驻留而降级 CPU 的策略。语义阶段结束先回收 Qwen Worker，人脸阶段结束释放 Session 所有权，再进入 OCR；执行互斥与驻留假设分离，驱动实际显存归还仍需真机测量。
+- 生产 Scheduler 统一使用 `Catalog.lease_now_ms()`；OCR claim、heartbeat、completion/submit 同源，时钟回拨不倒退，误传未来时间不会缩短租约。本地等待仍用 monotonic。
+- OCR/人脸/后台语义在单任务安全边界检查前台；串行前台请求后 OCR 恢复执行。`WorkerQueryEncoder` 直接入口也必须取得 GPU 槽，不能绕过资源协调。
+- `AiWorkerClient.shutdown()`、`WorkerQueryEncoder.close()` 与 `ApiContext.close()` 均保留失败引用并支持重试；child、队列、Job/进程句柄和临时诊断文件未全部释放时不报告成功。
+
+本轮最终受影响 JUnit `affected-final-r1.xml`：382 项，376 passed / 6 skipped / 0 failed / 0 errors，终端退出码 0。全量首轮 `full-after-b-r1.xml`：3826 项，3747 passed / 27 failed / 52 skipped / 0 errors，终端退出码 1；新增的 1 个并发交错断言单独复跑通过。终轮全量 `full-final-b-r2.xml`：3827 项，3749 passed / 26 failed / 52 skipped / 0 errors，终端退出码 1；26 个失败与历史全量全部同名，本轮无新增失败。Ruff、compileAll、diff-check 退出 0。
+
+尚未完成：GTX 1660 6 GB + HDD 真实模型/显存/恢复验收、独立 DS-H 全受影响面审查。当前仅有 RTX 4060 Laptop 8188 MiB 观察，且模型权重不可用。阶段 C/D/E 不开始；B 不能标记最终 ACCEPTED。详见[报告](../reports/P4-BUILD-STABILITY-A2.md)。

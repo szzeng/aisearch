@@ -68,6 +68,7 @@ class Scheduler:
         artifact_store: ArtifactStore | None = None,
         job_ids: Sequence[int] | None = None,
         capability_revision: str | None = None,
+        lease_clock: Callable[[], int] | None = None,
     ) -> None:
         self.catalog = catalog
         self.job_ids = None if job_ids is None else tuple(int(value) for value in job_ids)
@@ -81,6 +82,7 @@ class Scheduler:
         self.retry_base_ms = int(retry_base_ms)
         self.retry_multiplier = int(retry_multiplier)
         self.retry_max_ms = int(retry_max_ms)
+        self._lease_clock = lease_clock
         self.artifact_store = artifact_store or ArtifactStore.open(
             catalog.db_path.parent.parent
         )
@@ -95,6 +97,14 @@ class Scheduler:
 
     def _processor_ids(self) -> list[str]:
         return sorted(self._specs)
+
+    def _lease_time(self, supplied_ms: int) -> int:
+        """Use the task's one wall-clock source whenever the caller provides it."""
+        return (
+            int(self._lease_clock())
+            if self._lease_clock is not None
+            else int(supplied_ms)
+        )
 
     # --------------------------------------------------------------------- policy
     def read_state(self) -> state.SchedulerState:
@@ -152,6 +162,7 @@ class Scheduler:
         _ocr_gpu_managed: bool = False,
     ) -> JobRequest | None:
         """Claim work; GPU OCR requires the managed run_once lifecycle and permit."""
+        now_ms = self._lease_time(now_ms)
         from photo_search.runtime.background_slot import background_slot_owned_by_current_thread
 
         gpu_ids = [
@@ -357,6 +368,7 @@ class Scheduler:
         now_ms: int,
         lease_seconds: int | None = None,
     ) -> jobs.Job:
+        now_ms = self._lease_time(now_ms)
         with self.catalog.write() as connection:
             return jobs.heartbeat(
                 connection,
@@ -372,6 +384,9 @@ class Scheduler:
         qualification_clock: Callable[[], int] | None = None,
     ) -> jobs.Job:
         """Validate, publish and atomically commit artifact/outbox plus job state."""
+        now_ms = self._lease_time(now_ms)
+        if self._lease_clock is not None:
+            qualification_clock = self._lease_clock
         # File hashing/staging stays outside a SQLite transaction. This first qualification
         # avoids even a temporary file for an already stale/late execution; the exact same
         # checks run again under BEGIN IMMEDIATE before publication and database writes.
@@ -572,6 +587,7 @@ class Scheduler:
 
     def cancel(self, *, job_id: int, now_ms: int, reason: str | None = None) -> jobs.Job:
         """Cancel one job; clearing the lease in the same commit refuses late results."""
+        now_ms = self._lease_time(now_ms)
         with self.catalog.write() as connection:
             job = jobs.get_job(connection, int(job_id))
             if job.state in jobs.TERMINAL_STATES:
@@ -598,6 +614,7 @@ class Scheduler:
 
     def expire_leases(self, *, now_ms: int) -> list[int]:
         """Fail expired executions that have no retry budget left (ADR-0002 §6.2)."""
+        now_ms = self._lease_time(now_ms)
         with self.catalog.write() as connection:
             rows = jobs.fail_exhausted_leases(
                 connection, now_ms=int(now_ms), processor_ids=self._processor_ids()
@@ -608,6 +625,7 @@ class Scheduler:
         self, *, now_ms: int, capability_revision: str | None = None
     ) -> list[int]:
         """Re-qualify capability-blocked jobs after a new healthy capability revision."""
+        now_ms = self._lease_time(now_ms)
         resumed: list[int] = []
         with self.catalog.write() as connection:
             processor_ids = self._processor_ids()
@@ -670,6 +688,7 @@ class Scheduler:
         lease_monitor: Callable[[JobRequest], Any] | None = None,
     ) -> bool:
         """Claim, dispatch and commit at most one job; ``False`` when nothing ran."""
+        now_ms = self._lease_time(now_ms)
         try:
             request = self.claim_next(
                 worker_id=worker_id, now_ms=now_ms, _ocr_gpu_managed=True,
@@ -682,12 +701,18 @@ class Scheduler:
             return False
         heartbeat = None
         if request.task_type == "image_ocr":
-            if completion_clock is None:
+            if self._lease_clock is not None:
+                completion_clock = self._lease_clock
+            elif completion_clock is None:
                 completion_clock = self.catalog.now_ms
             if lease_monitor is None:
                 from photo_search.ocr.lease_heartbeat import OcrLeaseHeartbeat
 
-                heartbeat = OcrLeaseHeartbeat(self.catalog, lease_seconds=self.lease_seconds)
+                heartbeat = OcrLeaseHeartbeat(
+                    self.catalog,
+                    lease_seconds=self.lease_seconds,
+                    clock=self._lease_clock or self.catalog.now_ms,
+                )
                 lease_monitor = lambda item: heartbeat.track(item, worker_id)
         try:
             with lease_monitor(request) if lease_monitor is not None else nullcontext():

@@ -72,6 +72,18 @@ class ControlledWorker:
         self._exchange("shutdown", None)
 
 
+class RetryShutdownWorker(ControlledWorker):
+    def __init__(self) -> None:
+        super().__init__(block_first=False)
+        self.shutdown_calls = 0
+
+    def shutdown(self) -> None:
+        self.shutdown_calls += 1
+        self.actions.append("shutdown")
+        if self.shutdown_calls == 1:
+            raise OSError("synthetic shutdown failure")
+
+
 class ObservedLock:
     """Observe a contender without sleeps; mutual exclusion still uses the real lock."""
 
@@ -193,3 +205,43 @@ def test_calls_waiting_behind_shutdown_cannot_reopen_the_channel(operation: str)
         assert errors[0].details == {"reason": "WORKER_CLOSED"}
     assert worker.actions == ["shutdown"]
     assert all(not path.exists() for path in upload.saved)
+
+
+def test_failed_encoder_close_keeps_worker_and_can_be_retried() -> None:
+    worker = RetryShutdownWorker()
+    adapter = WorkerQueryEncoder(worker, pinned_embedding_spec(MANIFEST))
+
+    with pytest.raises(OSError, match="synthetic shutdown failure"):
+        adapter.close()
+    assert adapter._client is worker
+    assert adapter._closed is False
+    assert adapter._closing is True
+
+    adapter.close()
+    adapter.close()
+    assert worker.shutdown_calls == 2
+    assert adapter._closed is True
+    assert worker.actions == ["shutdown", "shutdown"]
+
+
+def test_direct_worker_adapter_call_acquires_gpu_permit(monkeypatch) -> None:
+    import threading
+
+    from photo_search.face import service as face_service
+
+    slot = threading.RLock()
+    monkeypatch.setattr(face_service, "BACKGROUND_MODEL_SLOT", slot)
+
+    class CheckingWorker(ControlledWorker):
+        def encode_text(self, text: str) -> dict[str, Any]:
+            assert slot._is_owned()
+            return {"vector": VECTOR}
+
+    adapter = WorkerQueryEncoder(
+        CheckingWorker(block_first=False),
+        pinned_embedding_spec(MANIFEST),
+        requires_gpu_slot=True,
+    )
+    assert adapter.encode_queries(["query"]) == [VECTOR]
+    assert slot._is_owned() is False
+    adapter.close()

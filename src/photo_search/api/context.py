@@ -67,9 +67,11 @@ class ApiContext:
         self._encoder_factory = encoder_factory
         self._encoder: QueryEncoder | None = None
         self._gated_encoder: QueryEncoder | None = None
+        self._encoder_closing = False
         self._encoder_failure_code: str | None = None
         self._encoder_resolved = False
         self._adapter_lock = threading.RLock()
+        self._encoder_close_lock = threading.Lock()
         #: P2-06B: the optional reranker adapter, injected exactly like the query encoder.
         #: This build ships none, and a request that asks for a rerank is then answered with
         #: the base page plus ``rerank_state=UNAVAILABLE`` instead of a silent no-op.
@@ -80,9 +82,12 @@ class ApiContext:
         self._runner: ScanRunner | None = None
         self._place_cover_warmer: Any | None = None
         self._lifecycle_lock = threading.Lock()
+        self._shutdown_lock = threading.Lock()
         self._closed = False
         self._shutdown_complete = threading.Event()
         self._lease_release_deferred = False
+        self._deferred_cleanup_active = False
+        self._close_running = False
         #: P4-02Y: the single background library refresh. It reuses the *same* ADR-0003 §7
         #: adapter as the query path (never a second model instance), resolves its own
         #: connection inside its worker thread, and reports through ``photo_search.refresh``.
@@ -124,15 +129,38 @@ class ApiContext:
 
     def release_query_encoder_for_candidate(self) -> None:
         """Drop the old model while the caller owns the exclusive resource gate."""
-        with self._adapter_lock:
-            encoder = self._encoder
-            self._encoder = None
-            self._gated_encoder = None
-            self._encoder_failure_code = None
-            self._encoder_resolved = False
-        stop = getattr(encoder, "close", None)
-        if callable(stop):
-            stop()
+        self._close_query_encoder()
+
+    def release_query_encoder_for_background(self) -> None:
+        """Release a resident semantic worker before another model family needs GPU.
+
+        The caller owns the shared background slot, so no new foreground encode can
+        enter while shutdown runs.  A failed close leaves the original objects and a
+        ``MODEL_RESOURCE_BUSY`` refusal in place, allowing the refresh to report the
+        failure and a later lifecycle retry to try again.
+        """
+        self._close_query_encoder()
+
+    def _close_query_encoder(self) -> None:
+        with self._encoder_close_lock:
+            with self._adapter_lock:
+                encoder = self._encoder
+                if encoder is None:
+                    return
+                self._encoder_closing = True
+            stop = getattr(encoder, "close", None)
+            try:
+                if callable(stop):
+                    stop()
+            except BaseException:
+                raise
+            with self._adapter_lock:
+                if self._encoder is encoder:
+                    self._encoder = None
+                    self._gated_encoder = None
+                    self._encoder_failure_code = None
+                    self._encoder_resolved = False
+                self._encoder_closing = False
 
     def _default_service_factory(self) -> CatalogService:
         return CatalogService.open(data_root=self.settings.data_root)
@@ -350,6 +378,7 @@ class ApiContext:
                 ),
                 enrich=self._refresh_enrich,
                 executor=self._refresher_executor,
+                encoder_release=self.release_query_encoder_for_background,
                 on_success=self.start_automatic_retention_cleanup,
             )
         return self._refresher
@@ -373,7 +402,10 @@ class ApiContext:
     def face_detail_runner(self) -> FaceDetailRunner:
         """The serialized, on-demand worker for source-detail face jobs."""
         if self._face_detail_runner is None:
-            self._face_detail_runner = FaceDetailRunner(self._service_factory)
+            self._face_detail_runner = FaceDetailRunner(
+                self._service_factory,
+                release_semantic_worker=self.release_query_encoder_for_background,
+            )
         return self._face_detail_runner
 
     def retention_cleanup_runner(self) -> Any:
@@ -427,6 +459,14 @@ class ApiContext:
         with self._adapter_lock:
             if self._closed:
                 return None
+            if self._encoder_closing:
+                from photo_search.catalog.errors import RUNTIME_CAPABILITY_UNAVAILABLE, CatalogError
+
+                raise CatalogError(
+                    RUNTIME_CAPABILITY_UNAVAILABLE,
+                    "the semantic model worker is still being released",
+                    details={"reason": "MODEL_RESOURCE_BUSY", "retryable": True},
+                )
             if self._encoder_resolved:
                 return self._gated_encoder
             if self._encoder_factory is None:
@@ -444,6 +484,14 @@ class ApiContext:
                 )
             if self._closed:
                 return None
+            if self._encoder_closing:
+                from photo_search.catalog.errors import RUNTIME_CAPABILITY_UNAVAILABLE, CatalogError
+
+                raise CatalogError(
+                    RUNTIME_CAPABILITY_UNAVAILABLE,
+                    "the semantic model worker is still being released",
+                    details={"reason": "MODEL_RESOURCE_BUSY", "retryable": True},
+                )
             if self._encoder_resolved:
                 return self._gated_encoder
             if self._encoder_factory is None:
@@ -496,10 +544,24 @@ class ApiContext:
             shutdown_loop = None
         with self._lifecycle_lock:
             if self._closed:
-                return self._shutdown_complete.is_set()
-            self._closed = True
+                if self._shutdown_complete.is_set():
+                    return True
+                if self._close_running:
+                    return False
+                retry_now = not self._deferred_cleanup_active
+            else:
+                self._closed = True
+                self._close_running = True
+                retry_now = False
+            deferred = bool(self._deferred_cleanup_active)
             place_cover_warmer = self._place_cover_warmer
             self._place_cover_warmer = None
+        if retry_now:
+            with self._lifecycle_lock:
+                self._close_running = True
+            return self._finish_shutdown()
+        if deferred:
+            return False
         memories_runner = self._memories_runner
         self._memories_runner = None
         if memories_runner is not None:
@@ -563,6 +625,8 @@ class ApiContext:
                    if not future.done()]
         if threads or futures:
             logger.warning("shutdown incomplete: %d worker(s) still active; retaining data-root lease", len(threads) + len(futures))
+            with self._lifecycle_lock:
+                self._deferred_cleanup_active = True
             def finish_after_workers() -> None:
                 for thread in threads:
                     thread.join()
@@ -579,21 +643,31 @@ class ApiContext:
                             logger.exception("deferred worker cleanup failed")
                 if any(getattr(worker, "_cleanup_failed", False) for worker in workers if worker is not None):
                     logger.error("worker cleanup failed; retaining data-root lease")
+                    with self._lifecycle_lock:
+                        self._deferred_cleanup_active = False
+                        self._close_running = False
                     return
                 if shutdown_loop is None or shutdown_loop.is_closed():
                     logger.error("shutdown cleanup needs its owning event loop; retaining data-root lease")
+                    with self._lifecycle_lock:
+                        self._deferred_cleanup_active = False
+                        self._close_running = False
                     return
                 try:
                     shutdown_loop.call_soon_threadsafe(self._finish_shutdown)
                 except RuntimeError:
                     logger.exception("shutdown event loop unavailable; retaining data-root lease")
+                    with self._lifecycle_lock:
+                        self._deferred_cleanup_active = False
+                        self._close_running = False
             threading.Thread(target=finish_after_workers, name="photo-search-shutdown", daemon=True).start()
             return False
         if any(getattr(worker, "_cleanup_failed", False) for worker in workers if worker is not None):
             logger.error("worker cleanup failed; retaining data-root lease")
+            with self._lifecycle_lock:
+                self._close_running = False
             return False
-        self._finish_shutdown()
-        return self._shutdown_complete.is_set()
+        return self._finish_shutdown()
 
     def defer_data_root_lease_release(self, lease: Any) -> None:
         """Transfer lease release to the cleanup waiter when shutdown is incomplete."""
@@ -604,29 +678,35 @@ class ApiContext:
             lease.close()
         threading.Thread(target=release_after_shutdown, name="photo-search-lease-release", daemon=True).start()
 
-    def _finish_shutdown(self) -> None:
-        service = self._service
-        self._face_detail_recovery_started = False
-        if service is not None:
+    def _finish_shutdown(self) -> bool:
+        with self._shutdown_lock:
+            if self._shutdown_complete.is_set():
+                return True
+            service = self._service
+            self._face_detail_recovery_started = False
+            if service is not None:
+                try:
+                    service.close()
+                except Exception:  # pragma: no cover - shutdown must not raise
+                    logger.exception("closing the catalog service failed; retaining data-root lease")
+                    with self._lifecycle_lock:
+                        self._deferred_cleanup_active = False
+                        self._close_running = False
+                    return False
+                self._service = None
+            # Keep the adapter reference until close has really succeeded. The worker
+            # manager likewise retains a failed child/queue/diagnostic resource.
             try:
-                service.close()
-            except Exception:  # pragma: no cover - shutdown must not raise
-                logger.exception("closing the catalog service failed; retaining data-root lease")
-                return
-            self._service = None
-        # P4-02N: an adapter that owns a worker process is stopped here as well. The seam is
-        # duck-typed on purpose - the documented ADR-0003 adapter has ``close()`` and a test
-        # stand-in may not, which must never turn a shutdown into a failure.
-        with self._adapter_lock:
-            encoder = self._encoder
-            self._encoder = None
-            self._gated_encoder = None
-        stop = getattr(encoder, "close", None)
-        if callable(stop):
-            try:
-                stop()
+                self._close_query_encoder()
             except Exception:  # pragma: no cover - shutdown must not raise
                 logger.exception("stopping the query encoder failed; retaining data-root lease")
-                return
-        self.search_sessions.clear()
-        self._shutdown_complete.set()
+                with self._lifecycle_lock:
+                    self._deferred_cleanup_active = False
+                    self._close_running = False
+                return False
+            self.search_sessions.clear()
+            with self._lifecycle_lock:
+                self._deferred_cleanup_active = False
+                self._close_running = False
+            self._shutdown_complete.set()
+            return True

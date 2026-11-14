@@ -18,9 +18,16 @@ logger = logging.getLogger("photo_search.ocr.heartbeat")
 class OcrLeaseHeartbeat:
     """One lazy thread per drain; no SQLite writes for jobs below the interval."""
 
-    def __init__(self, catalog: Catalog, *, lease_seconds: int) -> None:
+    def __init__(
+        self,
+        catalog: Catalog,
+        *,
+        lease_seconds: int,
+        clock: Any | None = None,
+    ) -> None:
         self._catalog = catalog
         self._lease_seconds = max(1, int(lease_seconds))
+        self._clock = clock or catalog.lease_now_ms
         self._condition = threading.Condition()
         self._active: tuple[int, str, str] | None = None
         self._stopping = False
@@ -82,7 +89,7 @@ class OcrLeaseHeartbeat:
                     with catalog.write() as connection:
                         jobs.heartbeat(
                             connection, job_id=identity[0], lease_token=identity[1],
-                            worker_id=identity[2], now_ms=catalog.now_ms(),
+                            worker_id=identity[2], now_ms=int(self._clock()),
                             lease_seconds=self._lease_seconds,
                         )
                 except Exception:

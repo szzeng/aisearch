@@ -1,6 +1,6 @@
-# P4-BUILD-STABILITY-A2 — 阶段 A 审查
+# P4-BUILD-STABILITY-A2 — 阶段 A–B 执行报告
 
-日期 2026-11-12。基线 `6d4d76271808c2136c7222f6160a25f94948bfb5`，开工工作区干净；A 卡的修改已按后续用户授权提交、推送，旧状态文档的“未提交”是历史文字。本卡 **IMPLEMENTATION PARTIAL / VALIDATION PENDING**，GPU 协调、诊断与关闭修复尚未完成，不代表 A 或 A2 通过。
+初始审查日期 2026-11-12，历史基线 `6d4d76271808c2136c7222f6160a25f94948bfb5`；A 卡的修改已按后续用户授权提交、推送，旧阶段中的“未提交”是历史文字。2026-11-14 基于 `5fc7b739583083e68867d2c2f9867c1342c3ba7d` 续做后的当前状态见文末“B 阶段架构收敛与必要修复”：代码面和受影响验证已收敛，但目标硬件、真实显存和独立审查仍 PENDING，A2 不是最终 ACCEPTED。
 
 ## 已核实的问题与保留成果
 
@@ -87,3 +87,77 @@ OCR 缓存现限于一次 enrichment 阶段并跨分页复用；不创建模型�
 `preclaim-affected-r3.xml` 290 项、0 failures / 0 errors / 11 skipped；`ocr-pagination-affected-r3.xml` 312 项、0 failures / 0 errors / 11 skipped。两次工具会话重置，未取得终端进程退出码；上述只报告 JUnit 内容，不标记完整进程通过；两次集合、前述全量和增量均处于不同代码时点。`ruff check .`、`git diff --check` 在暂停时退出 0；此前全量 3780 项的 33 失败、52 跳过及其对照边界见上文。
 
 独立 Terra 高推理全受影响面复查仍有未关闭项：父进程异常退出后旧 AI 子进程可能继续使用 GPU（P1）；当前命名等待标记不能保证多个进程前台交接公平；无法证明 OCR 与常驻模型 6 GB 显存共驻或永久失效 session 的安全卸载；显式 `now_ms` 若远超 catalog 时钟，OCR 领取与心跳时钟可能不一致并缩短租约，须统一时钟域或补防护。真实 GTX 1660 + HDD 不可用，阶段 C 进度诊断、D 关闭重试、E 最终回归与独立最终复查均未完成；不要把本次提交当成发布或验收。
+
+## 2026-11-14 B 阶段架构收敛与必要修复
+
+**状态：B 代码面已实现并通过自动化和 Windows 进程级验证；任务不是最终 ACCEPTED。** 当前环境没有 Qwen、Chinese-CLIP、OCR 或人脸权重，无法执行真实模型推理和显存预算；目标 GTX 1660 6 GB + 机械硬盘仍不可用，独立 DS-H 全受影响面审查也尚未执行。因此不得把本段写成正式发布或目标硬件 PASS。
+
+### 根因分类
+
+- **原代码缺陷：** `ApiContext` 在 encoder 关闭前清空引用；`WorkerQueryEncoder` 在 `client.shutdown()` 前设置 closed；关闭异常后第二次调用直接返回，三者共同造成失败后不可重试。独立 `WorkerQueryEncoder`/模型选择 CLI 调用没有自行获取 GPU 许可，可绕过 API `GatedEncoder`。子进程退出后父端只靠队列长超时发现，且 spawn 子进程未绑定父进程生命周期。OCR 领取后的提交若由任意调用方传入与 Catalog 不同的 `now_ms`，会使用不同时间域。
+- **架构设计缺口：** 原实现的父进程命名 Mutex 只协调执行，没有表达“父进程拥有子进程”的生命周期；Qwen 子进程驻留与 OCR/人脸父进程 Session 驻留也未被区分。仅用同一把执行锁不能证明获取锁时另一模型已经归还 VRAM。
+- **原本有效的机制：** OCR GPU 已在领取前取得后台槽，CPU OCR 不进入 GPU 槽；GPU OCR 按张检查前台；Scheduler 直接 `run_once()` 在无槽时不领取 GPU；任务 token/revision 提交检查、30 秒 SQLite 等待恢复和 LanceDB outbox 语义保留。
+
+### 最终资源所有权
+
+| 执行路径 | 实际 GPU 执行者 | 许可持有者 | 领取/初始化规则 | 退出规则 |
+|---|---|---|---|---|
+| Qwen / Chinese-CLIP Worker | spawn 子进程 | API 父进程持有 `BACKGROUND_MODEL_SLOT`；`WorkerQueryEncoder` 的直接入口会自行取得该槽，已持有时可重入 | 父进程取得槽后启动/查询子进程；子进程在 Job Object 绑定和启动门放行前不加载模型 | 正常关闭先停子进程再释放槽；父进程被强杀时 Job Object 关闭会终止子进程，OS 再释放许可 |
+| OCR GPU / CPU | OCR 线程 | GPU 使用后台槽；CPU 从不取得 GPU 槽 | GPU 在探测、Session 创建和单图推理前取得槽；任务在槽内才领取 | 每个推理 `finally` 释放；任务间重新检查前台和取消 |
+| 人脸 | Face 执行线程 | 同一后台槽，保留 RLock 可重入 | 人脸阶段在入队/探测前取得槽；每张之间检查前台 | 当前推理完成后让出，缓存引用在模型族边界释放 |
+| 候选建库 | candidate 线程及其单 Worker | 后台槽 + `ModelResourceGate` exclusive | 保持既有规则：先停止旧查询 Worker，再建立唯一候选 Worker；不在锁内等待 SQLite | 候选结束或暂停时关闭候选 Worker，逆序释放 gate 与后台槽 |
+| 后台刷新语义 | refresh 线程及查询 Worker | 后台槽；模型族结束后回收 query encoder | 先用现有工厂取得固定 space 的 Worker；前台等待时在安全边界停止后续图片 | 在释放后台槽之前调用 encoder 回收，再进入人脸/OCR |
+
+**显存策略：** 不宣称多模型安全共驻，也不把执行锁释放当作显存已经释放。刷新在语义阶段结束时终止在位 Qwen Worker；人脸阶段结束先清空其 Session 所有权，再启动 OCR GPU。OCR 不因该切换策略改走 CPU；只有原有显式 CPU 路径或既有故障策略才会使用 CPU。ONNX Runtime/驱动是否在引用清空后立即归还全部 VRAM 仍需要目标硬件测量。
+
+### 锁顺序与前台
+
+资源顺序固定为：前台意图/等待标记 → `BACKGROUND_MODEL_SLOT` → `ModelResourceGate` → adapter/Worker 请求串行锁。候选建库保留后台槽 → exclusive gate。等待资源时不持有 SQLite 写事务；提交时重新验证 lease token、输入 revision 和当前时钟。释放顺序相反，所有许可均由上下文/finally 释放。
+
+OCR 已开始的单张推理允许完成；观察到前台等待后不领取下一张。人脸和后台语义同样在单图/单任务安全边界检查前台，不在一次不可中断推理中途强制回滚。语义 Worker 的 adapter 串行锁在 GPU 许可之后获取，避免直接 CLI 入口形成反向锁序。单应用进程内多个串行前台请求结束后，OCR 能在请求间隙继续；测试使用事件控制，未依赖 sleep 判定互斥通过。
+
+### 统一任务时钟
+
+`Catalog.lease_now_ms()` 以持久化协议所需的墙上毫秒为值，但在单个进程内不倒退；系统时钟回拨时冻结到已观察的高水位，恢复后继续前进。生产 Scheduler 全部使用该 clock 形式；OCR 的领取、心跳、执行结束重验和写事务提交都使用同一来源。GPU 等待、worker 退出等待等本地超时继续使用 `time.monotonic()`。调用方误传未来 `now_ms` 不再能人为缩短 OCR 租约。
+
+### Worker 与关闭
+
+- AI Worker 在 `Process.start()` 后立即加入带 `KILL_ON_JOB_CLOSE` 的 Windows Job Object；子进程在启动门打开前只检查父进程存活，不加载模型。父进程正常退出、异常退出或被强杀时，子进程均不能留在父进程许可之外继续推理。
+- Worker 回复等待按短间隔检查进程存活；子进程异常退出立即形成结构化 `WorkerExited`，不再等待完整 900 秒冷启动超时。
+- `AiWorkerClient.shutdown()` 只有在 child 已退出、请求/回复队列、Job 句柄、进程句柄和诊断临时文件均处理成功后才标记完成；失败保留对应引用并抛 `WorkerShutdownError`，下一次调用重试。
+- `WorkerQueryEncoder.close()` 失败后保持 `_closing`，阻止半关闭 Worker 接收新任务，但保留 client 供再次关闭。
+- `ApiContext` 在 encoder 真正关闭前不清引用；失败后 `close()` 可重试，已成功资源不重复释放。并发关闭由 close/shutdown 串行锁保护，工作线程未结束时继续保留数据根租约。
+
+### 修改文件
+
+| 文件 | 修改原因 |
+|---|---|
+| `src/photo_search/runtime/process_ownership.py` | 新增 Windows Job Object、父进程存活检查 |
+| `src/photo_search/workers/client.py` | 启动门、Job Object、异常退出探测、可重试完整清理 |
+| `src/photo_search/workers/ai_worker.py` | 父进程绑定完成后才加载模型 |
+| `src/photo_search/workers/query_encoder.py` | 直接调用许可下限、关闭重试与半关闭拒绝 |
+| `src/photo_search/api/context.py` | encoder 引用保留、关闭重试、后台回收回调与并发生命周期 |
+| `src/photo_search/api/refresher.py`, `api/face_detail_runner.py` | 在模型族切换前回收语义 Worker |
+| `src/photo_search/refresh/pipeline.py` | 后台语义逐任务让出、模型族边界与语义 Worker 回收 |
+| `src/photo_search/face/service.py`, `face/engine.py` | 人脸逐任务让出、统一租约时钟、Session 所有权释放 |
+| `src/photo_search/catalog/db.py`, `scheduler/engine.py`, `ocr/lease_heartbeat.py`, `ocr/service.py` | 非倒退租约时钟和统一 claim/heartbeat/submit clock |
+| `src/photo_search/indexing/semantic.py` | 后台建库可选的逐任务前台让出 |
+| `src/photo_search/models/embedding/cli.py`, `taken_time/service.py` | 所有生产 Scheduler 使用统一 lease clock |
+
+新增/完善了真实 spawn 子进程测试、Job Object 强制终止测试、子进程异常退出、串行前台后 OCR 恢复、时钟回拨/未来时间、CPU OCR 独立性、直接 Scheduler 许可、关闭失败重试和模型族 Session 所有权测试。没有迁移、依赖、模型身份、向量维度、OCR Processor ID 或确认协议变化。
+
+### 本轮自动验证
+
+- HEAD 基线定向集合：`test-results/p4-build-stability-a2/b-head-baseline.xml`，202 项，196 passed / 6 skipped / 0 failed / 0 errors，终端退出码 0。
+- 最终受影响面：`test-results/p4-build-stability-a2/affected-final-r1.xml`，382 项，376 passed / 6 skipped / 0 failed / 0 errors，终端退出码 0。
+- 专项关闭/进程集合：`final-focused-r1.xml`，终端退出码 0；真实 Windows 父进程强杀后子进程退出和 GPU Mutex 释放、子进程异常退出、正常关闭均通过。
+- 全量首轮：`full-after-b-r1.xml`，3826 项，3747 passed / 27 failed / 52 skipped / 0 errors，终端退出码 1。历史 `full-regression-r1.xml` 33 个失败中，26 个同名失败仍存在；5 个 Worker channel 失败和 2 个 person-detail 失败本轮不再出现，另新增 1 个 `test_p4_02c...two_maintainers...` 并发交错断言。该新增项单独复跑通过（`contended-r1.xml`），判定为时间敏感的时间窗假设，不是产品行为失败。
+- 终轮全量：`full-final-b-r2.xml`，3827 项，3749 passed / 26 failed / 52 skipped / 0 errors，终端退出码 1。26 个失败与历史 JUnit 全部同名，最终没有新增失败；历史 7 个失败已不再出现。终轮新增的 1 项是本轮新增的正常关闭测试，不是重试集合。
+- 52 个跳过均保留原有环境条件：5 项 Chinese-CLIP/P0-03 权重、23 项 buffalo_l 人脸权重、19 项 PP-OCRv4 权重、2 项 Windows symlink 权限、1 项 GPU opt-in、1 项未配置的公开中文地名资源包、1 项 collection 级跳过。没有为本轮通过而新增 skip、xfail 或削弱断言。
+- `ruff check .`、`compileall`、`git diff --check` 均退出 0。
+
+### 未关闭项与结论
+
+- 目标 GTX 1660 6 GB + HDD 不存在；当前只观察到 RTX 4060 Laptop 8188 MiB。模型目录也没有可执行真实 Qwen/CLIP/OCR/face 权重。真实 VRAM 峰值、模型切换后的实际归还时间、OOM 余量和 HDD 长时恢复仍为 **PENDING**，不能由合成测试替代。
+- 独立 DS-H 全受影响面工程审查尚未执行；按仓库策略不能由实现者自检冒充独立审查。阶段 C 建库进度诊断、D 的其余非必要清理、E 最终发布验收均未开始。
+- 因此 **B 的代码面已收敛，但不是最终完整 ACCEPTED**：自动化受影响面和 Windows 进程所有权通过，目标硬件/真实显存/独立审查未完成。下一阶段 C、D、E 不应在用户接受本结果并决定真实硬件验收前宣称已完成或正式开始。

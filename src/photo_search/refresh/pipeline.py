@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterable, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +47,7 @@ from photo_search.refresh.state import (
     STAGE_SKIPPED_NO_TARGETS,
     RefreshStatus,
 )
+from photo_search.runtime.background_slot import foreground_model_waiting
 
 #: The semantic selector's own bounded batch (the P4-02O default) and how many of them one
 #: refresh may run before it reports the remaining work instead of holding the run forever.
@@ -156,6 +157,7 @@ def refresh_library(
     device_policy: str = "cpu_allowed",
     enrich: bool = True,
     cancel_check: Callable[[], bool] | None = None,
+    encoder_release: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Run one complete refresh and return the final status snapshot.
 
@@ -262,6 +264,7 @@ def refresh_library(
             device=device,
             device_policy=device_policy,
             cancel_check=cancel_check,
+            encoder_release=encoder_release,
         )
     else:
         semantic = _semantic_stage(
@@ -274,6 +277,7 @@ def refresh_library(
             device=device,
             device_policy=device_policy,
             cancel_check=cancel_check,
+            encoder_release=encoder_release,
         )
     status.set_stage("semantic", semantic)
     stopped = cancelled()
@@ -482,6 +486,7 @@ def _semantic_stage(
     device: str,
     device_policy: str,
     cancel_check: Callable[[], bool] | None,
+    encoder_release: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """Confirm the content delta in the served semantic generation.
 
@@ -554,7 +559,8 @@ def _semantic_stage(
             **_content_report(catalog, space_id, content_delta, spec),
         }
     try:
-        with _background_model_slot(cancel_check):
+        with ExitStack() as resources:
+            resources.enter_context(_background_model_slot(cancel_check))
             try:
                 encoder = encoder_factory()
             except Exception as error:  # noqa: BLE001 - an unusable model is a reported skip
@@ -573,11 +579,15 @@ def _semantic_stage(
                     "batches": 0,
                     **_content_report(catalog, space_id, content_delta, spec),
                 }
+            if encoder_release is not None:
+                resources.callback(encoder_release)
             batches = 0
             encoded = 0
             last: dict[str, Any] | None = None
             try:
                 while batches < SEMANTIC_BATCH_CAP:
+                    if foreground_model_waiting():
+                        break
                     payload = semantic.build_index(
                         catalog,
                         encoder=encoder,
@@ -588,11 +598,14 @@ def _semantic_stage(
                         device=device,
                         device_policy=device_policy,
                         worker_id="library-refresh",
+                        yield_to_foreground=foreground_model_waiting,
                     )
                     batches += 1
                     encoded += int(payload["targets"])
                     last = payload
                     if bool(payload["coverage_complete"]) or int(payload["targets"]) == 0:
+                        break
+                    if foreground_model_waiting():
                         break
                     if cancel_check is not None and cancel_check():
                         break
@@ -711,6 +724,7 @@ def _semantic_build_stage(
     device: str,
     device_policy: str,
     cancel_check: Callable[[], bool] | None,
+    encoder_release: Callable[[], None] | None = None,
 ) -> dict[str, Any]:
     """First build of a source: classify the scope, then encode it in bounded batches.
 
@@ -864,7 +878,8 @@ def _semantic_build_stage(
             **_content_report(catalog, space_id, content_delta, spec),
         }
     try:
-        with _background_model_slot(cancel_check):
+        with ExitStack() as resources:
+            resources.enter_context(_background_model_slot(cancel_check))
             try:
                 encoder = encoder_factory()
             except Exception as error:  # noqa: BLE001 - an unusable model is a reported skip
@@ -909,12 +924,16 @@ def _semantic_build_stage(
                     **_backlog_report(catalog, space_id, processor_id, scopes),
                     **_content_report(catalog, space_id, content_delta, spec),
                 }
+            if encoder_release is not None:
+                resources.callback(encoder_release)
             encoded = 0
             batches = 0
             last: dict[str, Any] | None = None
             try:
                 for scope in scopes:
                     while batches < BUILD_ROUND_CAP:
+                        if foreground_model_waiting():
+                            break
                         payload = semantic.build_index(
                             catalog,
                             encoder=encoder,
@@ -926,11 +945,14 @@ def _semantic_build_stage(
                             device=device,
                             device_policy=device_policy,
                             worker_id="library-refresh",
+                            yield_to_foreground=foreground_model_waiting,
                         )
                         batches += 1
                         encoded += int(payload["targets"])
                         last = payload
                         if int(payload["targets"]) == 0:
+                            break
+                        if foreground_model_waiting():
                             break
                         if int(payload["drain"]["confirmed_delta"]) == 0:
                             # The batch handed work to the encoder and got nothing confirmed back
@@ -1378,6 +1400,23 @@ def _enrichment_stages(
         payload = _stage(status, name, runner)
         stages[name] = payload
         status.set_stage(name, payload)
+        if name == "face":
+            # The next model family must start from a process that no longer owns
+            # face sessions. This is an ownership boundary, not a claim that the
+            # driver has already returned VRAM.
+            try:
+                face_cache.release_sessions()
+            except Exception as error:  # noqa: BLE001 - enrichment remains independently reportable
+                status.note_error(
+                    stage="face",
+                    code=type(error).__name__,
+                    message="face session references could not be released before OCR",
+                )
+                stages["face"] = {
+                    **payload,
+                    "state": STAGE_FAILED,
+                    "reason": "SESSION_RELEASE_FAILED",
+                }
     return stages
 
 
@@ -2003,7 +2042,12 @@ def _python_scheduler(
     """A scheduler with the pure-Python runtime capability of the non-model processors."""
     from photo_search.scheduler import engine as scheduler_engine
 
-    scheduler = scheduler_engine.Scheduler(catalog, [spec], lease_seconds=catalog.lease_seconds)
+    scheduler = scheduler_engine.Scheduler(
+        catalog,
+        [spec],
+        lease_seconds=catalog.lease_seconds,
+        lease_clock=catalog.lease_now_ms,
+    )
     snapshot = capability(now_ms=int(now_ms))
     scheduler.record_capability(snapshot, now_ms=int(now_ms))
     scheduler.record_qualification(

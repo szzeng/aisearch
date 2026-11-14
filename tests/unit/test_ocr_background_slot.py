@@ -699,6 +699,28 @@ def test_face_cache_shares_session_for_equivalent_gpu_device_names(monkeypatch):
     assert calls == ["auto", "host"]
 
 
+def test_face_sessions_are_released_before_the_ocr_model_family_starts():
+    from photo_search.face.engine import FaceEngineCache
+
+    class Engine:
+        def __init__(self):
+            self.closed = 0
+
+        def close(self):
+            self.closed += 1
+
+    engine = Engine()
+    cache = FaceEngineCache()
+    cache._engines[("weights", "gpu")] = engine
+    cache._attempts[("weights", "gpu")] = {"usable": True}
+
+    cache.release_sessions()
+
+    assert engine.closed == 1
+    assert cache._engines == {}
+    assert cache._attempts == {}
+
+
 @pytest.mark.parametrize("first,second", [("auto", "gpu"), ("gpu", "auto"), ("cpu", "host")])
 def test_face_cache_reports_current_request_device_and_reason(monkeypatch, first, second):
     from types import SimpleNamespace

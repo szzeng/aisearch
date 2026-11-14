@@ -591,7 +591,12 @@ def _record_candidate_runtime(
     spec = semantic.semantic_spec(
         entry.manifest_path, facts, device_policy=str(entry.device_policy)
     )
-    scheduler = scheduler_engine.Scheduler(catalog, [spec], lease_seconds=catalog.lease_seconds)
+    scheduler = scheduler_engine.Scheduler(
+        catalog,
+        [spec],
+        lease_seconds=catalog.lease_seconds,
+        lease_clock=catalog.lease_now_ms,
+    )
     evidence = semantic.record_runtime_evidence(
         scheduler, spec, facts, now_ms=int(facts.get("observed_at") or 0)
     )

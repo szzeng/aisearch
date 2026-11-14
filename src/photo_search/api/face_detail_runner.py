@@ -24,10 +24,12 @@ class FaceDetailRunner:
         service_factory: Callable[[], Any],
         *,
         executor: Callable[[Any, int], Any] | None = None,
+        release_semantic_worker: Callable[[], None] | None = None,
         name: str = "photo-search-face-detail",
     ) -> None:
         self._service_factory = service_factory
         self._executor = executor
+        self._release_semantic_worker = release_semantic_worker
         self._service: Any | None = None
         self._cleanup_failed = False
         self._engine_cache: Any | None = None
@@ -147,6 +149,7 @@ class FaceDetailRunner:
                         engine_cache=self._engine_cache,
                         source_detail=True,
                         job_ids=[int(row["job_id"]) for row in selected],
+                        release_semantic_worker=self._release_semantic_worker,
                     )
             except Exception:  # noqa: BLE001 - durable job state carries the user-visible result
                 logger.exception("source-detail face queue failed for %s=%s", kind, identifier)
@@ -166,8 +169,13 @@ class FaceDetailRunner:
                             if ("batch", remaining) not in self._pending:
                                 self._pending.append(("batch", remaining))
                     if not self._pending:
-                        # A finished/paused batch releases its ONNX sessions and VRAM.
-                        # The next batch still reuses one cache across all its photos.
+                        # Drop the owned sessions at the safe batch boundary. The next
+                        # batch still reuses one cache across all of its photos.
+                        cache = self._engine_cache
+                        if cache is not None:
+                            release = getattr(cache, "release_sessions", None)
+                            if callable(release):
+                                release()
                         self._engine_cache = None
                     self._condition.notify_all()
 
@@ -223,6 +231,7 @@ class FaceDetailRunner:
                     source_detail=True,
                     job_ids=[item["job_id"]],
                     engine_cache=self._engine_cache,
+                    release_semantic_worker=self._release_semantic_worker,
                     cancel=lambda: self._closed,
                     claim_check=lambda: (
                         batches.status(catalog, batch_id)["state"] in ("QUEUED", "RUNNING")

@@ -51,6 +51,8 @@ class Catalog:
         self._in_read_snapshot = False
         self._closed = False
         self._close_callbacks: list[Callable[[], None]] = []
+        self._lease_clock_lock = threading.Lock()
+        self._last_lease_ms: int | None = None
 
     @classmethod
     def open(
@@ -96,6 +98,21 @@ class Catalog:
 
     def now_ms(self) -> int:
         return int(self.clock())
+
+    def lease_now_ms(self) -> int:
+        """Nondecreasing wall time for every persisted lease decision.
+
+        Wall clock is still the protocol unit (it must remain comparable after a
+        restart).  Within one process, however, a backwards system clock correction
+        freezes this source until real time catches up instead of renewing or
+        expiring leases against a different instant.  Local waits separately use
+        ``time.monotonic()``.
+        """
+        observed = int(self.clock())
+        with self._lease_clock_lock:
+            if self._last_lease_ms is None or observed > self._last_lease_ms:
+                self._last_lease_ms = observed
+            return int(self._last_lease_ms)
 
     def read_one(self, sql: str, parameters: tuple = ()) -> sqlite3.Row | None:
         return self.connection.execute(sql, parameters).fetchone()
