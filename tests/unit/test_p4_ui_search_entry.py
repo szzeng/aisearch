@@ -103,7 +103,7 @@ const filters={queryText:query,querySource:new Element(),queryAvailability:new E
 ui.setEls(filters);query.value="保留我的搜索词";filters.querySource.value="4";filters.queryAvailability.value="missing";
 let advancedClearSubmits=0;ui.setSubmit(()=>advancedClearSubmits++);ui.resetFilters();
 assert.equal(query.value,"保留我的搜索词","clearing advanced filters preserves the global query");
-assert.equal(filters.querySource.value,"");assert.equal(filters.queryAvailability.value,"any");
+assert.equal(filters.querySource.value,"");assert.equal(filters.queryAvailability.value,"present");
 assert.equal(advancedClearSubmits,1,"the existing query is rebuilt once after clearing manual filters");
 query.value="";ui.setState({person:{selected:{},enabled:false},search:{mode:"text",intentPlan:null,placeAware:null,requestGeneration:7,loading:true,hits:[{}],lastBody:{},sessionId:"old",cursor:"old",binding:"old"}});ui.resetFilters();
 assert.equal(ui.getState().search.requestGeneration,8,"clearing an empty query invalidates in-flight results");

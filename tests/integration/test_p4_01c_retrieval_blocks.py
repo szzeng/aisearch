@@ -757,7 +757,7 @@ def test_the_rewritten_predicates_select_the_same_photos() -> None:
 
         for availability, expected in (
             ("present", [1, 2, 3, 6, 7, 9]),
-            ("missing", [4, 5, 8, 10, 11, 12]),
+            ("missing", [5, 10]),
         ):
             where, parameters = retrieval.scope_condition(
                 connection, retrieval.SearchScope.build(availability=availability)
@@ -782,6 +782,7 @@ def test_the_rewritten_predicates_select_the_same_photos() -> None:
                 reference = reference_person.format(
                     person="IN (" + ", ".join("?" for _ in person_ids) + ")"
                 )
+            reference += " AND EXISTS (SELECT 1 FROM file_locations p WHERE p.asset_id=a.asset_id)"
             assert selected(where, parameters) == selected(reference, list(person_ids))
 
         # The member predicate still governs: MANUAL_UNASSIGNED, exclusions and SUGGESTED.
@@ -789,12 +790,12 @@ def test_the_rewritten_predicates_select_the_same_photos() -> None:
             *retrieval.scope_condition(
                 connection, retrieval.SearchScope.build(person_ids=[3])
             )
-        ) == [1, 4, 9, 10]
+        ) == [1, 9, 10]
         assert selected(
             *retrieval.scope_condition(
                 connection, retrieval.SearchScope.build(person_ids=[4])
             )
-        ) == [3, 4]
+        ) == [3]
 
         # Everything ANDs: source + availability + person together.
         where, parameters = retrieval.scope_condition(

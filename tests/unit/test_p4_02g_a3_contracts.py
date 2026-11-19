@@ -486,6 +486,7 @@ def test_real_oracle_computes_c_sql_and_c_strict_for_both_window_shapes() -> Non
             "CREATE TABLE assets(asset_id INTEGER PRIMARY KEY, state TEXT);"
             "CREATE TABLE file_locations(asset_id INTEGER, source_id INTEGER, "
             "relative_path TEXT, availability TEXT);"
+            "CREATE INDEX idx_file_locations_asset ON file_locations(asset_id);"
             "INSERT INTO file_locations VALUES (1,1,'one.jpg','PRESENT'),"
             "(2,1,'two.jpg','PRESENT');"
             "CREATE TABLE index_entries(asset_id INTEGER, generation_id TEXT, space_id TEXT, "

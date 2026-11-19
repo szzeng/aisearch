@@ -737,6 +737,8 @@
     if (model.overview) {
       var counts = model.overview.counts || {};
       lines.push("按数据库计数：MISSING 位置 " + (counts.missing_locations || 0) + "；无 PRESENT 位置的唯一资产 " + (counts.assets_without_present || 0) + "；零位置资产 " + (counts.zero_location_assets || 0) + "；有 PRESENT 副本的资产 " + (counts.assets_with_present_copy || 0) + "。这些数字有交集，不可相加。 ");
+      var zero = model.overview.zero_location_preview;
+      if (zero) lines.push("零位置资产：总数 " + zero.total + "；可人工清理 " + zero.eligible + "；因人工记录、引用或活动任务受保护 " + zero.protected_or_active + "。没有位置不能证明原图已永久删除；执行时会重新检查。" + (zero.total === 0 ? " 当前没有零位置资产。" : zero.eligible === 0 ? " 当前没有可人工清理的零位置资产。" : ""));
       lines.push(model.overview.retention_time_evidence || "首次失效时间未知，不具备清理资格。");
       var states = model.overview.retention_counts || {};
       lines.push("资格状态：观察中 " + (states.OBSERVING || 0) + "；到期且复核 " + (states.ELIGIBLE || 0) + "；受阻 " + (states.BLOCKED || 0) + "；来源批量异常待核实 " + (model.overview.unresolved_source_anomalies || 0) + "。一键操作会重新复核资格；人工记录不会删除。");
@@ -777,14 +779,14 @@
 
   function renderRetentionRunLine(progress) {
     var run = progress.run || {};
-    var runLabel = "清理任务 " + (run.run_id || "") + " / " + run.mode + " / " + run.state;
+    var runLabel = (run.cleanup_scope === "ZERO_LOCATION" ? "零位置清理" : "失效照片清理") + "任务 " + (run.run_id || "") + " / " + run.mode + " / " + run.state;
     var stateText = run.state === "PARTIAL" && progress.has_unsettled_work === false
       ? runLabel + "：本轮已结束，部分照片未清理；故障解除后可再次点击重新复核"
       : (run.state === "PARTIAL" && progress.has_unsettled_work
         ? "仍有未结算任务，可点击继续恢复（" + runLabel + "）"
         : runLabel);
     return stateText + "：已检查 " + (run.checked_assets || 0) +
-      "，已清理 " + (run.completed_assets || 0) + "，人工保护跳过 " + (run.skipped_human_assets || 0) +
+      "，已清理 " + (run.completed_assets || 0) + "，人工/引用/任务保护跳过 " + (run.skipped_human_assets || 0) +
       "，来源/扫描跳过 " + (run.skipped_source_assets || 0) + "，其他跳过 " + (run.skipped_other_assets || 0) +
       "，失败 " + (run.failed_assets || 0) + "；" + (run.has_more_candidates ? "仍有下一批" : "本轮候选已检查") +
       "；阶段：" + (run.stage || "未知") +
@@ -801,12 +803,35 @@
       } else {
         state.libraryRetentionRunId = null;
         els.libraryRetentionCleanup.disabled = false;
+        els.libraryRetentionZeroCleanup.disabled = false;
         loadLibraryRetention(true);
       }
     }).catch(function (failure) {
       state.libraryRetentionRunId = null;
       els.libraryRetentionCleanup.disabled = false;
+      els.libraryRetentionZeroCleanup.disabled = false;
       setStatus(els.libraryRetentionStatus, "读取清理进度失败：" + describe(failure), "error");
+    });
+  }
+
+  function startZeroLocationCleanup() {
+    var zero = (state.libraryRetention.overview || {}).zero_location_preview;
+    if (!zero) { setStatus(els.libraryRetentionStatus, "请先重新检查零位置资产预览。", "error"); return; }
+    var previous = (state.libraryRetention.overview || {}).latest_run || {};
+    var resumable = previous.has_unsettled_work && previous.run && previous.run.cleanup_scope === "ZERO_LOCATION";
+    if (!zero.eligible && !resumable) { setStatus(els.libraryRetentionStatus, zero.total ? "没有可清理的零位置资产：现有资产均受人工记录、引用或活动任务保护。" : "没有零位置资产，因此没有清理。", "success"); return; }
+    if (!window.confirm("零位置资产 " + zero.total + "，当前可人工清理 " + zero.eligible + "，受保护 " + zero.protected_or_active + "。没有位置不能证明原图已永久删除。将分批重新检查并清理符合条件的 PhotoSearch 派生数据，不删除原图或人工记录。继续吗？")) return;
+    els.libraryRetentionCleanup.disabled = true;
+    els.libraryRetentionZeroCleanup.disabled = true;
+    setStatus(els.libraryRetentionStatus, "正在创建零位置清理任务…");
+    request("/storage/library-retention/cleanup", { method: "POST", body: { confirmed: true, scope: "ZERO_LOCATION" } }).then(function (result) {
+      var body = result.body || {};
+      if (body.run_id) { state.libraryRetentionRunId = body.run_id; return pollLibraryRetentionRun(body.run_id); }
+      els.libraryRetentionCleanup.disabled = false; els.libraryRetentionZeroCleanup.disabled = false;
+      return loadLibraryRetention(true);
+    }).catch(function (failure) {
+      els.libraryRetentionCleanup.disabled = false; els.libraryRetentionZeroCleanup.disabled = false;
+      setStatus(els.libraryRetentionStatus, "启动零位置清理失败：" + describe(failure), "error");
     });
   }
 
@@ -5045,6 +5070,7 @@
       libraryRetentionMore: document.getElementById("library-retention-more"),
       libraryRetentionAutomatic: document.getElementById("library-retention-automatic"),
       libraryRetentionCleanup: document.getElementById("library-retention-cleanup"),
+      libraryRetentionZeroCleanup: document.getElementById("library-retention-zero-cleanup"),
       faceProfile: document.getElementById("face-profile"),
       refreshStatus: document.getElementById("refresh-status"),
       sourceForm: document.getElementById("source-form"),
@@ -5452,6 +5478,7 @@
     document.getElementById("storage-backup-create").addEventListener("click", createManualStorageBackup);
     document.getElementById("library-retention-refresh").addEventListener("click", function () { loadLibraryRetention(true); });
     els.libraryRetentionCleanup.addEventListener("click", startLibraryRetentionCleanup);
+    els.libraryRetentionZeroCleanup.addEventListener("click", startZeroLocationCleanup);
     els.libraryRetentionAutomatic.addEventListener("change", setLibraryRetentionAutomatic);
     els.libraryRetentionAnomalies.addEventListener("click", function (event) {
       var button = event.target.closest('[data-retention-anomaly="resolve"]');

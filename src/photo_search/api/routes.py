@@ -670,7 +670,10 @@ async def storage_library_retention_cleanup(request: Request, payload: dict[str,
     )
 
     context = context_of(request)
-    created = create_library_retention_run(service_of(request).catalog, mode="MANUAL")
+    scope = payload.get("scope", "MISSING")
+    if not isinstance(scope, str) or scope not in {"MISSING", "ZERO_LOCATION"}:
+        raise ApiError("INVALID_REQUEST", "invalid cleanup scope", status=400)
+    created = create_library_retention_run(service_of(request).catalog, mode="MANUAL", cleanup_scope=scope)
     if created.get("conflict"):
         raise ApiError(
             "RUN_IN_PROGRESS", "另一授权模式的清理任务仍在执行，请待其结束后重试。",

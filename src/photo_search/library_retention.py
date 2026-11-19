@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from pathlib import Path
@@ -15,6 +16,25 @@ from photo_search.retention import OBSERVATION_MS
 DEFAULT_LIMIT = 50
 MAX_LIMIT = 50
 ACTIVE_JOB_STATES = ("QUEUED", "RUNNING", "RETRY_WAIT")
+_HISTORY_TOKEN = re.compile(r"[0-9a-f]{64}")
+_HISTORY_TOKEN_LIMIT = 100_000
+
+
+def _history_face_tokens(connection: sqlite3.Connection, tables: set[str]) -> set[str] | None:
+    """Bound preview memory; overflow falls back to exact per-face checks."""
+    tokens: set[str] = set()
+    if "person_operation_items" not in tables:
+        return tokens
+    for row in connection.execute(
+        "SELECT before_value_json,after_value_json,entity_key FROM person_operation_items"
+    ):
+        for value in row:
+            if value is not None:
+                for match in _HISTORY_TOKEN.finditer(str(value)):
+                    tokens.add(match.group())
+                    if len(tokens) > _HISTORY_TOKEN_LIMIT:
+                        return None
+    return tokens
 
 
 def _tables(connection: sqlite3.Connection) -> set[str]:
@@ -26,7 +46,8 @@ def _tables(connection: sqlite3.Connection) -> set[str]:
 
 def _columns(connection: sqlite3.Connection, table: str) -> set[str]:
     # ``table`` comes only from sqlite_master, not from a request parameter.
-    return {str(row[1]) for row in connection.execute(f'PRAGMA table_info("{table}")')}
+    quoted = table.replace('"', '""')
+    return {str(row[1]) for row in connection.execute(f'PRAGMA table_info("{quoted}")')}
 
 
 def _exists(connection: sqlite3.Connection, table: str, where: str, args: tuple[Any, ...]) -> bool:
@@ -45,9 +66,9 @@ def _unknown_asset_reference_schema(connection: sqlite3.Connection, tables: set[
         # protect an asset; cache entries are rebuildable and cascade on asset GC.
         "photo_smart_exclusions", "photo_smart_cache_entries", "user_annotations", "asset_tags",
         "asset_geo_facts", "asset_ocr_text", "asset_ocr_regions", "asset_place_exclusions",
-        "cn_admin_resolutions", "place_resolutions", "place_operation_items",
+        "cn_admin_resolutions", "place_resolutions", "place_resolution_candidates", "place_operation_items",
         "face_redetection_groups", "face_redetection_mappings", "face_detail_association_queue",
-        "face_detail_auto_assets", "face_detail_batch_assets", "person_hidden",
+        "face_detail_auto_assets", "face_detail_batch_assets", "face_detail_coordinate_frames", "person_hidden",
         "faces", "face_embeddings", "face_person_links", "face_assignment_controls",
         "face_exclusions", "face_association_queue", "face_index_entries",
         "face_index_outbox", "face_candidates", "face_inbox_hidden", "person_operations",
@@ -56,20 +77,56 @@ def _unknown_asset_reference_schema(connection: sqlite3.Connection, tables: set[
         "asset_place_assignments", "asset_place_assignment_history", "place_operations",
         "place_operation_items", "search_documents", "search_feedback",
         "search_projection_queue", "jobs", "artifacts", "index_outbox", "index_entries",
-        "upgrade_targets", "ocr_documents", "ocr_texts", "ocr_results",
+        "upgrade_targets", "ocr_documents", "ocr_texts", "ocr_results", "cr2_job_recoveries",
     }
+    # Unknown references to any deleted row, including a known CASCADE child, must
+    # block before a vector deletion is issued. A RESTRICT failure at finalization
+    # would otherwise arrive too late; CASCADE could silently erase unknown data.
+    targets = {
+        "assets", "persons", "file_locations", "faces", "face_redetection_mappings",
+        "face_redetection_groups", "face_detail_batch_assets", "face_detail_auto_assets",
+        "face_detail_coordinate_frames", "upgrade_targets", "face_candidates", "face_index_entries",
+        "face_index_outbox", "face_embeddings", "face_assignment_controls", "face_exclusions",
+        "face_person_links", "face_association_queue", "face_detail_association_queue",
+        "asset_geo_facts", "asset_ocr_text", "asset_ocr_regions", "cn_admin_resolutions",
+        "place_resolutions", "place_resolution_candidates", "asset_metadata", "search_projection_queue",
+        "asset_retention_source_evidence", "asset_retention_state", "asset_tags",
+        "asset_place_assignments", "photo_smart_cache_entries", "search_documents", "index_outbox", "index_entries",
+    }
+    references: dict[str, list[sqlite3.Row]] = {}
+    try:
+        for table in tables:
+            quoted = table.replace('"', '""')
+            references[table] = list(connection.execute(f'PRAGMA foreign_key_list("{quoted}")'))
+        changed = True
+        while changed:
+            changed = False
+            for table in tables & recognized:
+                if table.casefold() not in targets and any(
+                    str(row[2]).casefold() in targets and str(row[6]).upper() == "CASCADE"
+                    for row in references[table]
+                ):
+                    targets.add(table.casefold())
+                    changed = True
+    except sqlite3.Error:
+        return True
     for table in tables - recognized:
         try:
             columns = _columns(connection, table)
         except sqlite3.Error:
             return True
-        if columns.intersection({"asset_id", "face_id", "location_id", "person_id", "entity_id"}):
+        if {column.casefold() for column in columns}.intersection({"asset_id", "face_id", "location_id", "person_id", "entity_id", "subject_id"}):
+            return True
+        # A future table may use an arbitrary local column name for its reference.
+        # Inspect declared foreign keys as well as common soft-reference spellings.
+        if any(str(row[2]).casefold() in targets for row in references[table]):
             return True
     return False
 
 
 def _human_or_protected(
-    connection: sqlite3.Connection, tables: set[str], asset_id: int, *, include_barrier: bool = True
+    connection: sqlite3.Connection, tables: set[str], asset_id: int, *, include_barrier: bool = True,
+    history_face_tokens: set[str] | None = None,
 ) -> tuple[bool, list[str]]:
     """Return conservative human/reference protections for one bounded list row."""
     if include_barrier and "asset_retention_barriers" in tables and _exists(
@@ -95,6 +152,10 @@ def _human_or_protected(
         checks.append(("asset_place_assignment_history", "asset_id = ? AND (manual_lock = 1 OR origin = 'MANUAL')", (asset_id,), "人工地点历史"))
     if "search_feedback" in tables:
         checks.append(("search_feedback", "asset_id = ?", (asset_id,), "搜索反馈历史"))
+    if "place_resolutions" in tables:
+        # ADR-0005 freezes resolution products with DELETE triggers, including
+        # NO_CANDIDATE rows. Preserve them before creating a vector barrier.
+        checks.append(("place_resolutions", "asset_id=?", (asset_id,), "不可删除的地点解析记录"))
     if "person_collection_face_members" in tables:
         # The archive survives face replacement and content changes. Its soft
         # asset anchor remains a human reference even without a current face.
@@ -108,6 +169,21 @@ def _human_or_protected(
     has_faces = bool(face_ids)
     if has_faces:
         face_filter = "face_id IN (SELECT face_id FROM faces WHERE asset_id = ?)"
+        if "person_operation_items" in tables:
+            if isinstance(history_face_tokens, set):
+                historical = any(face_id in history_face_tokens for face_id in face_ids)
+            else:
+                historical = any(
+                    _exists(connection, "person_operation_items",
+                            "instr(before_value_json,?)>0 OR instr(after_value_json,?)>0 OR instr(entity_key,?)>0",
+                            (face_id, face_id, face_id)) for face_id in face_ids
+                )
+            if historical:
+                return True, ["人物操作或撤销历史"]
+        if "persons" in tables and _exists(
+            connection, "persons", "avatar_face_id IN (SELECT face_id FROM faces WHERE asset_id=?)", (asset_id,)
+        ):
+            checks.append(("persons", "1=1", (), "人工人物封面"))
         if "face_person_links" in tables:
             if _exists(connection, "face_person_links", f"{face_filter} AND (assignment_kind = 'MANUAL' OR last_operation_id IS NOT NULL)", (asset_id,)):
                 checks.append(("face_person_links", "1=1", (), "人物归属或人工纠错"))
@@ -158,15 +234,14 @@ def _human_or_protected(
 
     if "jobs" in tables:
         states = ",".join("?" for _ in ACTIVE_JOB_STATES)
-        if _exists(
-            connection,
-            "jobs",
-            f"((subject_type = 'asset' AND subject_id = ?) OR "
-            f"(subject_type = 'face' AND subject_id IN (SELECT face_id FROM faces WHERE asset_id=?)) OR "
-            f"(subject_type = 'location' AND subject_id IN (SELECT CAST(location_id AS TEXT) FROM file_locations WHERE asset_id=?))) "
-            f"AND state IN ({states})",
-            (str(asset_id), asset_id, asset_id, *ACTIVE_JOB_STATES),
-        ):
+        job_scopes = (
+            ("asset", "(?)", (str(asset_id),)),
+            ("face", "(SELECT face_id FROM faces WHERE asset_id=?)", (asset_id,)),
+            ("location", "(SELECT CAST(location_id AS TEXT) FROM file_locations WHERE asset_id=?)", (asset_id,)),
+        )
+        if any(_exists(connection, "jobs INDEXED BY idx_jobs_subject",
+                       f"subject_type=? AND subject_id IN {subject} AND state IN ({states})",
+                       (kind, *args, *ACTIVE_JOB_STATES)) for kind, subject, args in job_scopes):
             checks.append(("jobs", "1=1", (), "活动任务"))
     for table, where, args, label in checks:
         if where == "1=1" or _exists(connection, table, where, args):
@@ -195,6 +270,7 @@ def _classification(
     unknown_schema: bool,
     retention_state: str | None = None,
     unresolved_anomaly: bool = False,
+    history_face_tokens: set[str] | None = None,
 ) -> dict[str, Any]:
     asset_id = int(row["asset_id"])
     locations = int(row["location_count"] or 0)
@@ -204,7 +280,14 @@ def _classification(
     has_refs = False
     reference_query_failed = False
     try:
-        has_refs, reasons = _human_or_protected(connection, tables, asset_id)
+        has_refs, reasons = _human_or_protected(
+            connection, tables, asset_id, include_barrier=locations != 0,
+            history_face_tokens=history_face_tokens if locations == 0 else None,
+        )
+        if locations == 0 and not has_refs and _exists(
+            connection, "asset_retention_barriers", "asset_id=? AND state='COMPLETE'", (asset_id,)
+        ):
+            has_refs, reasons = True, ["已完成的清理屏障"]
         if unknown_schema:
             has_refs = True
             reasons = ["发现无法解释的资产引用类型"]
@@ -218,7 +301,10 @@ def _classification(
     elif reference_query_failed or unknown_schema:
         category, reason = "待核实/受保护", "；".join(reasons)
     elif locations == 0:
-        category, reason = "来源已取消登记/零位置", "资产没有位置记录；不能推断原图已被用户永久删除"
+        category = "来源已取消登记/零位置"
+        reason = "资产没有位置记录；不能推断原图已被用户永久删除"
+        if has_refs:
+            reason += "；保护原因：" + "；".join(reasons)
     elif has_refs:
         category, reason = "包含人工信息或受保护引用", "；".join(reasons)
     elif str(row["unavailable_source_count"] or 0) != "0":
@@ -240,6 +326,8 @@ def _classification(
         "retention_state": retention_state or "UNKNOWN",
         "unresolved_source_anomaly": bool(unresolved_anomaly),
         "retention_eligibility": (
+            ("人工记录、引用或任务受保护；不能清理" if has_refs else "可人工确认后清理；执行时再次检查")
+            if locations == 0 else
             "异常来源待人工核实；需重新成功扫描后开始观察"
             if unresolved_anomaly
             else (
@@ -304,21 +392,25 @@ def _run_has_unsettled_work(connection: sqlite3.Connection, run: sqlite3.Row) ->
     return bool(result and result["has_unsettled_work"])
 
 
-def create_library_retention_run(catalog: Catalog, *, mode: str) -> dict[str, Any]:
+def create_library_retention_run(catalog: Catalog, *, mode: str, cleanup_scope: str = "MISSING") -> dict[str, Any]:
     """Persist a click-time-fenced run; the worker selects at most 20 rows per batch."""
     normalized = str(mode).upper()
     if normalized not in {"MANUAL", "AUTOMATIC"}:
         raise ValueError("mode must be MANUAL or AUTOMATIC")
+    scope = str(cleanup_scope).upper()
+    if scope not in {"MISSING", "ZERO_LOCATION"} or (scope == "ZERO_LOCATION" and normalized != "MANUAL"):
+        raise ValueError("zero-location cleanup requires explicit manual authorization")
     now = int(catalog.now_ms())
     with catalog.write() as connection:
         active = _unsettled_retention_run(connection)
         if active is not None:
-            if str(active["mode"]) != normalized:
+            if str(active["mode"]) != normalized or str(active["cleanup_scope"]) != scope:
                 return {
                     "conflict": True,
                     "code": "RUN_IN_PROGRESS",
                     "run_id": str(active["run_id"]),
                     "mode": str(active["mode"]),
+                    "cleanup_scope": str(active["cleanup_scope"]),
                     "state": str(active["state"]),
                 }
             run_id = str(active["run_id"])
@@ -334,15 +426,23 @@ def create_library_retention_run(catalog: Catalog, *, mode: str) -> dict[str, An
         run_id = uuid.uuid4().hex
         connection.execute(
             "INSERT INTO library_retention_runs(run_id,mode,state,stage,total_assets,created_at_ms,updated_at_ms,"
-            "selection_cutoff_at_ms) VALUES(?,?, 'QUEUED','候选范围快照',0,?,?,?)",
-            (run_id, normalized, now, now, now),
+            "selection_cutoff_at_ms,cleanup_scope) VALUES(?,?, 'QUEUED','候选范围快照',0,?,?,?,?)",
+            (run_id, normalized, now, now, now, scope),
         )
-        connection.execute(
-            f"INSERT INTO library_retention_run_candidates(run_id,asset_id) "
-            f"SELECT ?,r.asset_id FROM asset_retention_state r JOIN assets a USING(asset_id) "
-            f"WHERE r.state IN ({marks}) AND r.updated_at_ms<=? ORDER BY r.asset_id",
-            (run_id, *states, now),
-        )
+        if scope == "ZERO_LOCATION":
+            connection.execute(
+                "INSERT INTO library_retention_run_candidates(run_id,asset_id) "
+                "SELECT ?,a.asset_id FROM assets a WHERE NOT EXISTS "
+                "(SELECT 1 FROM file_locations l WHERE l.asset_id=a.asset_id) ORDER BY a.asset_id",
+                (run_id,),
+            )
+        else:
+            connection.execute(
+                f"INSERT INTO library_retention_run_candidates(run_id,asset_id) "
+                f"SELECT ?,r.asset_id FROM asset_retention_state r JOIN assets a USING(asset_id) "
+                f"WHERE r.state IN ({marks}) AND r.updated_at_ms<=? ORDER BY r.asset_id",
+                (run_id, *states, now),
+            )
         selection_max = int(connection.execute(
             "SELECT COALESCE(MAX(asset_id),0) FROM library_retention_run_candidates WHERE run_id=?",
             (run_id,),
@@ -539,6 +639,12 @@ def _preview_snapshot(
            )) AS assets_with_present_copy
         """
     ).fetchone()
+    history_face_tokens: set[str] | None = None
+    if int(after_asset_id) == 0 and int(counts["zero_location_assets"] or 0):
+        try:
+            history_face_tokens = _history_face_tokens(connection, tables)
+        except Exception:
+            history_face_tokens = None
     rows = connection.execute(
         """
         SELECT a.asset_id,
@@ -582,6 +688,7 @@ def _preview_snapshot(
         _classification(
             connection, tables, row, unknown_schema,
             *retention_by_id.get(int(row["asset_id"]), (None, False)),
+            history_face_tokens=history_face_tokens,
         )
         for row in page_rows
     ]
@@ -608,6 +715,29 @@ def _preview_snapshot(
     ).fetchone()
     trusted_timed = int(retention_time_evidence[0] or 0)
     unknown_timed = int(retention_time_evidence[1] or 0)
+    # This is an explicit preview, not a deletion authorization. Iterate the ID
+    # stream without materializing the library, and fail closed on every error.
+    zero_total = int(counts["zero_location_assets"] or 0)
+    zero_protected = 0
+    if int(after_asset_id) == 0:
+        if unknown_schema:
+            zero_protected = zero_total
+        else:
+            cursor = connection.execute(
+                "SELECT a.asset_id FROM assets a WHERE NOT EXISTS "
+                "(SELECT 1 FROM file_locations l WHERE l.asset_id=a.asset_id) ORDER BY a.asset_id"
+            )
+            for row in cursor:
+                try:
+                    protected, _ = _human_or_protected(
+                        connection, tables, int(row[0]), include_barrier=False,
+                        history_face_tokens=history_face_tokens,
+                    )
+                    if not protected:
+                        protected = _exists(connection, "asset_retention_barriers", "asset_id=? AND state='COMPLETE'", (int(row[0]),))
+                except Exception:
+                    protected = True
+                zero_protected += int(protected)
     return {
         "counts": {key: int(counts[key] or 0) for key in (
             "missing_locations", "assets_without_present", "zero_location_assets", "assets_with_present_copy"
@@ -618,6 +748,9 @@ def _preview_snapshot(
                 "SELECT state, COUNT(*) AS count FROM asset_retention_state GROUP BY state"
             ).fetchall()
         } if "asset_retention_state" in tables else {},
+        "zero_location_preview": ({"total": zero_total, "eligible": zero_total - zero_protected,
+                                   "protected_or_active": zero_protected}
+                                  if int(after_asset_id) == 0 else None),
         "unresolved_source_anomalies": int(connection.execute(
             "SELECT COUNT(*) FROM retention_source_anomalies WHERE state='NEEDS_REVIEW'"
         ).fetchone()[0]) if "retention_source_anomalies" in tables else 0,
@@ -651,7 +784,7 @@ def _preview_snapshot(
 
 
 def _cleanup_preflight(
-    connection: sqlite3.Connection, *, asset_id: int, require_expired: bool
+    connection: sqlite3.Connection, *, asset_id: int, require_expired: bool, zero_location: bool = False
 ) -> list[str]:
     """Return fail-closed blockers from current authority state, never from a stale preview."""
     tables = _tables(connection)
@@ -661,6 +794,18 @@ def _cleanup_preflight(
     ).fetchone()
     if asset is None:
         return ["资产已不存在"]
+    if zero_location:
+        if connection.execute("SELECT 1 FROM file_locations WHERE asset_id=? LIMIT 1", (int(asset_id),)).fetchone():
+            blockers.append("资产已恢复位置，零位置清理不适用")
+        try:
+            protected, reasons = _human_or_protected(connection, tables, int(asset_id), include_barrier=False)
+            if protected:
+                blockers.extend(reasons)
+            if _unknown_asset_reference_schema(connection, tables):
+                blockers.append("存在无法解释的资产引用类型")
+        except Exception:
+            blockers.append("引用或任务检查失败")
+        return list(dict.fromkeys(blockers))
     state = connection.execute(
         "SELECT first_missing_at_ms,state FROM asset_retention_state WHERE asset_id=?",
         (int(asset_id),),
@@ -720,7 +865,7 @@ def _cleanup_preflight(
 
 
 def begin_asset_retention_cleanup(
-    catalog: Catalog, *, asset_id: int, now_ms: int, manual_early: bool = False
+    catalog: Catalog, *, asset_id: int, now_ms: int, manual_early: bool = False, zero_location: bool = False
 ) -> dict[str, Any]:
     """Revalidate one asset and atomically activate its barrier plus vector tombstones.
 
@@ -737,11 +882,12 @@ def begin_asset_retention_cleanup(
         if barrier is not None and str(barrier["state"]) == "COMPLETE":
             return {"asset_id": int(asset_id), "state": "COMPLETE", "delete_event_ids": []}
         blockers = _cleanup_preflight(
-            connection, asset_id=int(asset_id), require_expired=not manual_early
+            connection, asset_id=int(asset_id), require_expired=not manual_early, zero_location=zero_location
         )
         if blockers:
             restored_copy = connection.execute(
-                "SELECT 1 FROM file_locations WHERE asset_id=? AND availability='PRESENT' LIMIT 1",
+                "SELECT 1 FROM file_locations WHERE asset_id=? "
+                + ("LIMIT 1" if zero_location else "AND availability='PRESENT' LIMIT 1"),
                 (int(asset_id),),
             ).fetchone() is not None
             if barrier is not None and restored_copy:
@@ -805,7 +951,8 @@ def _abort_restored_asset_cleanup(
 
 
 def finalize_asset_retention_cleanup(
-    catalog: Catalog, *, asset_id: int, now_ms: int
+    catalog: Catalog, *, asset_id: int, now_ms: int, zero_location: bool = False,
+    require_expired: bool = False,
 ) -> dict[str, Any]:
     """Delete safe machine rows after all image-vector tombstones are confirmed."""
     from photo_search.places import revision as place_revision
@@ -820,11 +967,13 @@ def finalize_asset_retention_cleanup(
         if str(barrier["state"]) == "COMPLETE":
             return {"asset_id": int(asset_id), "state": "COMPLETE", "machine_rows_removed": 0}
         if connection.execute(
-            "SELECT 1 FROM file_locations WHERE asset_id=? AND availability='PRESENT' LIMIT 1",
+            "SELECT 1 FROM file_locations WHERE asset_id=? "
+            + ("LIMIT 1" if zero_location else "AND availability='PRESENT' LIMIT 1"),
             (int(asset_id),),
         ).fetchone() is not None:
             _abort_restored_asset_cleanup(connection, asset_id=int(asset_id), now_ms=int(now_ms))
-            return {"asset_id": int(asset_id), "state": "CANCELLED_RESTORED", "machine_rows_removed": 0}
+            return {"asset_id": int(asset_id), "state": "CANCELLED_RESTORED", "machine_rows_removed": 0,
+                    "blockers": ["资产已恢复位置"]}
         pending = connection.execute(
             "SELECT COUNT(*) FROM index_outbox WHERE asset_id=? AND event_type='DELETE_VECTOR' "
             "AND state<>'CONFIRMED'",
@@ -832,7 +981,7 @@ def finalize_asset_retention_cleanup(
         ).fetchone()[0]
         if int(pending):
             return {"asset_id": int(asset_id), "state": "WAITING_FOR_VECTOR_DELETE", "machine_rows_removed": 0}
-        blockers = _cleanup_preflight(connection, asset_id=int(asset_id), require_expired=False)
+        blockers = _cleanup_preflight(connection, asset_id=int(asset_id), require_expired=require_expired, zero_location=zero_location)
         if blockers:
             has_human_protection, _ = _human_or_protected(
                 connection, _tables(connection), int(asset_id), include_barrier=False

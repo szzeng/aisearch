@@ -24,6 +24,7 @@ def test_search_layout_keeps_one_search_form_and_groups_common_filters() -> None
     assert common < advanced < results
     for control_id in ("query-retrieval-mode", "query-favorites-only", "query-availability"):
         assert html.index(f'id="{control_id}"') < advanced
+    assert '<option value="present" selected>在库</option>' in html
     assert 'id="open-coverage"' in html and 'class="search-more-options"' in html
     assert ".advanced-filter-grid" in styles and "@media (max-width: 40rem)" in styles
     assert ".search-header-toolbar" in styles and ".search-more-options-menu" in styles
@@ -32,11 +33,35 @@ def test_search_layout_keeps_one_search_form_and_groups_common_filters() -> None
     assert "app-header.has-global-search > h1 { grid-column: 1; grid-row: 2;" in styles
 
 
+def test_upload_from_legacy_similar_search_uses_present_and_restores_on_failure() -> None:
+    node = shutil.which("node")
+    assert node is not None
+    source = (Path(__file__).resolve().parents[2] / "src/photo_search/web/search.js").read_text(encoding="utf-8")
+    start = source.index("  function submitUpload(event)")
+    end = source.index("\n  function resetFilters()", start)
+    script = r'''
+const assert=require("assert/strict");let sent=null;
+const state={search:{mode:"asset_image",selectedScope:null,favoritesOnly:false,intentPlan:null,placeAware:null,
+loading:false,requestGeneration:1,timeBrowse:{},hits:[],assetQueryId:1}};
+const els={queryAvailability:{value:"any"},queryText:{value:""},uploadFile:{files:[{}]},uploadStatus:{},
+uploadSubmit:{},assetQuerySummary:{},queryStatus:{textContent:"failed"},loadMore:{},gridSentinel:{}};
+function collectFilters(){return {captureFrom:"",captureTo:""};} function selectedPersonIds(){return [];}
+function setStatus(){} function clearSimilarAssetUrl(){} function setSimilarQueryControls(){} function saveSearchSnapshot(){}
+function sendSearch(){sent=els.queryAvailability.value;return Promise.resolve(false);}
+''' + source[start:end] + r'''
+(async()=>{submitUpload({preventDefault(){}});await Promise.resolve();await Promise.resolve();
+assert.equal(sent,"present");assert.equal(els.queryAvailability.value,"any");assert.equal(state.search.mode,"asset_image");
+})().catch(e=>{console.error(e);process.exitCode=1;});
+'''
+    result = subprocess.run([node, "-e", script], capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 0, result.stderr
+
+
 def test_text_mode_switch_paging_and_validated_return_keep_the_query_contract(tmp_path: Path) -> None:
     node = shutil.which("node")
     assert node is not None, "Node is required for search interaction checks"
     search_page = Path(__file__).resolve().parents[2] / "src" / "photo_search" / "web" / "search.html"
-    assert '/web/search.js?v=p4-ui2-copy-daily-ux-1' in search_page.read_text(encoding="utf-8")
+    assert '/web/search.js?v=p4-orphan-search-1' in search_page.read_text(encoding="utf-8")
     script = r"""
 const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
 class Element {
@@ -147,6 +172,13 @@ function assertLiteral(request){
   assert.equal(request.capture_from,"2026-01-01");assert.equal(request.capture_to_exclusive,"2026-02-01");
 }
 (async()=>{
+  const resetAvailability=harness();await flush();
+  resetAvailability.get("query-availability").value="missing";
+  resetAvailability.get("query-reset").fire("click");await flush();
+  assert.equal(resetAvailability.get("query-availability").value,"present");
+  resetAvailability.get("query-text").value="test";
+  resetAvailability.get("search-form").fire("submit");await flush();
+  assert.equal(resetAvailability.searchCalls().at(-1).body.availability,"present");
   const ordinary=harness();await flush();
   ordinary.setAnswer(body=>ok({...page(body,303,null),hits:[{asset_id:303,rank:33,
     hit_reason:"SEMANTIC",semantic_ready:true,matched_by:{vector:33},matched_text:["ocr_text"]}]}));
@@ -488,7 +520,7 @@ function assertLiteral(request){
   const similarBody={...page({retrieval_mode:"combined",top_k:3,page_size:1},202,"asset-next"),
     search_session_id:"asset-session-A",hits:similarHits,asset_query:{asset_id:101,filename:"ref.jpg",thumbnail_url:"/thumb/101"}};
   const similarSnapshot={mode:"asset_image",assetQueryId:101,assetQuery:similarBody.asset_query,
-    form:{pageSize:"1"},hits:similarHits,windowOffset:0,recycledCount:0,spacerHeight:0,
+    form:{pageSize:"1",availability:"any"},hits:similarHits,windowOffset:0,recycledCount:0,spacerHeight:0,
     search_session_id:"asset-session-A",next_cursor:"asset-next",count:2,total_candidates:3,
     lastBody:similarBody,lastRequestBody:{asset_id:101,top_k:3,page_size:1},scrollY:347};
   const token="return-token-A";
@@ -515,7 +547,10 @@ function assertLiteral(request){
   similarReturn.get("asset-query-filename").textContent="ref.jpg";
   similarReturn.get("asset-query-scope").textContent="搜索范围：全部图库";
   similarReturn.setAnswer(body=>new Promise(resolve=>{globalThis.releaseTextSearch=()=>resolve(ok(page(body,303,null)));}));
+  similarReturn.get("query-availability").value="any";
   similarReturn.get("search-form").fire("submit");
+  assert.equal(similarReturn.searchCalls().at(-1).body.availability,"present",
+    "leaving an older similar-search snapshot restores the ordinary present default");
   assert.equal(similarReturn.get("asset-query-summary").hidden,true,"text-mode submit hides the reference summary synchronously");
   assert.equal(similarReturn.get("asset-query-image").hidden,true);
   assert.equal(similarReturn.get("asset-query-image").src,undefined,"text-mode submit removes the reference thumbnail source immediately");

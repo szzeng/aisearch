@@ -30,11 +30,11 @@ def test_all_photo_pages_load_the_versioned_shared_viewer() -> None:
         assert "/web/photo-info.js?v=p4-ui2-overall-ux-polish-8" in document
         assert "/web/photo-info.css?v=p4-photo-ocr-display-a-1" in document
         assert 'data-shell-page="favorites" href="/?view=favorites"' in document
-    assert "search.js?v=p4-ui2-copy-daily-ux-1" in (web / "search.html").read_text(encoding="utf-8")
+    assert "search.js?v=p4-orphan-search-1" in (web / "search.html").read_text(encoding="utf-8")
     assert "persons.js?v=p4-ui2-person-batch-ux-fix-a-1" in (web / "persons.html").read_text(encoding="utf-8")
     assert "persons-albums.js?v=p4-ui2-header-meta-2" in (web / "persons.html").read_text(encoding="utf-8")
     assert "places-albums.js?v=p4-ui2-photo-detail-entry-a-1" in (web / "places.html").read_text(encoding="utf-8")
-    assert "/web/app.js?v=p4-a2-c-progress-1" in (web / "index.html").read_text(encoding="utf-8")
+    assert "/web/app.js?v=p4-orphan-cleanup-1" in (web / "index.html").read_text(encoding="utf-8")
     assert "/web/map.js?v=" in (web / "map.html").read_text(encoding="utf-8")
     assert 'event.target === dialog' in (web / "places-albums.js").read_text(encoding="utf-8"), "the place viewer fallback closes on backdrop clicks"
     assert 'element("button", "thumb-frame")' in (web / "app.js").read_text(encoding="utf-8")
@@ -127,11 +127,11 @@ code=code.replace('  if (document.readyState === "loading")',
 document.getElementById=()=>null;
 const context={document,window,location,history:{replaceState(){}},URLSearchParams,URL,console,fetch:async()=>({status:200,headers:{get:()=>"application/json"},ok:true,json:async()=>({app_version:"test",schema_version:13,schema_status:"ok"})})};
 vm.createContext(context);vm.runInContext(code,context);
-const ui=context.ui,main={focus(){}},assetGrid={querySelector(){return null;}};
+const ui=context.ui,main={focus(){}},assetGrid={querySelector(){return null;},setAttribute(){}};
 const stub={hidden:false,textContent:"",setAttribute(){},querySelector(){return null;}};
 const appMetaStub={textContent:""};
 ui.setElements({views:sections,navButtons:[],main,assetGrid,browseTimeline:stub,browseListView:stub,
-  browseShowTimeline:stub,browseShowList:stub,browseCaptureState:stub,browseListFilters:stub,
+  browseShowTimeline:stub,browseShowList:stub,browseShowRandom:stub,browseRandomControls:stub,browseRandomState:stub,browseCaptureState:stub,browseListFilters:stub,
   browseListTimeHint:stub,browseTimelineNote:stub,notice:stub,appMeta:appMetaStub,
   browseSource:{value:""},browseOrder:{value:""},browseCaptureFrom:{value:""},browseCaptureTo:{value:""}});
 let routedDetail="";ui.setRenderDetail(id=>{routedDetail=String(id);});window.AIPhotoInfo={consumeDetailReturn:()=>null};location.hash="#/asset/123/details";ui.handleHash();
@@ -217,7 +217,7 @@ function page(url,referrer=""){
   const controls={browseSource:new Element("select"),browseOrder:new Element("select"),browseCaptureFrom:new Element("input"),browseCaptureTo:new Element("input")};
   for(const value of ["time_desc","capture_desc","asset_id"]){const option=new Element("option");option.value=value;controls.browseOrder.appendChild(option);}
   const els={...controls,views:sections,navButtons:[],main:new Element(),assetGrid:new Element(),sourcesStatus:new Element(),notice:new Element()};
-  for(const name of ["browseTimeline","browseListView","browseShowTimeline","browseShowList","browseCaptureState","browseListFilters","browseListTimeHint","browseTimelineNote"])els[name]=new Element();
+  for(const name of ["browseTimeline","browseListView","browseShowTimeline","browseShowList","browseShowRandom","browseRandomControls","browseRandomState","browseCaptureState","browseListFilters","browseListTimeHint","browseTimelineNote"])els[name]=new Element();
   let viewerOptions=null;
   const window={location,scrollY:420,sessionStorage:{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)},
     requestAnimationFrame:fn=>fn(),scrollTo(){},history:{replaceState(_s,_t,u){location.replace(u);},pushState(_s,_t,u){location.replace(u);}},

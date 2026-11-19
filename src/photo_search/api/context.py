@@ -380,7 +380,7 @@ class ApiContext:
                 if str(row["state"]) == "PARTIAL":
                     from photo_search.library_retention import create_library_retention_run
 
-                    resumed = create_library_retention_run(service.catalog, mode=str(row["mode"]))
+                    resumed = create_library_retention_run(service.catalog, mode=str(row["mode"]), cleanup_scope=str(row["cleanup_scope"]))
                     run_id = str(resumed["run_id"])
                 if not self.retention_cleanup_runner().start(run_id):
                     logging.getLogger("photo_search.api.retention").warning(

@@ -74,6 +74,244 @@ def _run_retention_to_terminal(api_env, run_id: str) -> dict:
     raise AssertionError(f"retention run did not reach a terminal state: {run_id}")
 
 
+def test_zero_location_manual_cleanup_batches_and_preserves_favorite_and_copy(api_env) -> None:
+    from photo_search.library_retention import (
+        create_library_retention_run,
+        library_retention_preview,
+    )
+
+    catalog = api_env.service.catalog
+    source_path = api_env.tmp_path / "zero-copy"
+    source_path.mkdir()
+    source_id = int(api_env.register_source("zero-copy", source_path)["source_id"])
+    for asset_id in range(2001, 2027):
+        _seed_asset(catalog, asset_id)
+    _seed_asset(catalog, 2027, locations=((source_id, "PRESENT"),))
+    with catalog.write() as connection:
+        connection.execute("INSERT INTO asset_favorites(asset_id,added_at_ms) VALUES(2001,1)")
+    preview = library_retention_preview(catalog)["zero_location_preview"]
+    assert preview == {"total": 26, "eligible": 25, "protected_or_active": 1}
+    with pytest.raises(ValueError):
+        create_library_retention_run(catalog, mode="AUTOMATIC", cleanup_scope="ZERO_LOCATION")
+    created = create_library_retention_run(catalog, mode="MANUAL", cleanup_scope="ZERO_LOCATION")
+    assert api_env.context.retention_cleanup_runner().start(created["run_id"])
+    run = _run_retention_to_terminal(api_env, created["run_id"])
+    assert (run["checked_assets"], run["completed_assets"], run["skipped_assets"]) == (26, 25, 1)
+    assert catalog.read_one("SELECT COUNT(*) FROM assets WHERE asset_id BETWEEN 2001 AND 2027")[0] == 2
+    assert catalog.read_one("SELECT COUNT(*) FROM asset_favorites WHERE asset_id=2001")[0] == 1
+
+
+def test_zero_location_rechecks_restored_location_and_unknown_reference(api_env) -> None:
+    from photo_search.catalog.errors import CatalogError
+    from photo_search.library_retention import (
+        begin_asset_retention_cleanup,
+        finalize_asset_retention_cleanup,
+    )
+
+    catalog = api_env.service.catalog
+    source_path = api_env.tmp_path / "zero-restore"
+    source_path.mkdir()
+    source_id = int(api_env.register_source("zero-restore", source_path)["source_id"])
+    _seed_asset(catalog, 2101)
+    begin_asset_retention_cleanup(catalog, asset_id=2101, now_ms=10, zero_location=True)
+    with catalog.write() as connection:
+        connection.execute("INSERT INTO file_locations(source_id,relative_path,path_key,asset_id,size,mtime_ns,availability) VALUES(?,?,?,2101,1,1,'MISSING')", (source_id, "restored.jpg", "restored.jpg"))
+    result = finalize_asset_retention_cleanup(catalog, asset_id=2101, now_ms=11, zero_location=True)
+    assert result["state"] == "CANCELLED_RESTORED"
+    assert catalog.read_one("SELECT 1 FROM assets WHERE asset_id=2101") is not None
+    _seed_asset(catalog, 2102)
+    with catalog.write() as connection:
+        connection.execute("CREATE TABLE unknown_user_reference(asset_id INTEGER)")
+    with pytest.raises(CatalogError, match="not currently safe"):
+        begin_asset_retention_cleanup(catalog, asset_id=2102, now_ms=12, zero_location=True)
+
+
+def test_zero_location_activity_and_restart_scope(api_env) -> None:
+    from photo_search.library_retention import (
+        begin_asset_retention_cleanup,
+        create_library_retention_run,
+        library_retention_preview,
+        prepare_library_retention_run_batch,
+    )
+
+    catalog = api_env.service.catalog
+    _seed_asset(catalog, 2201)
+    _seed_asset(catalog, 2202)
+    with catalog.write() as connection:
+        connection.execute("INSERT INTO jobs(subject_type,subject_id,input_revision,task_type,processor_id,state,run_after,created_at,updated_at) VALUES('asset','2202','r1','semantic','test@1','QUEUED',1,1,1)")
+    assert library_retention_preview(catalog)["zero_location_preview"] == {
+        "total": 2, "eligible": 1, "protected_or_active": 1,
+    }
+    created = create_library_retention_run(catalog, mode="MANUAL", cleanup_scope="ZERO_LOCATION")
+    assert create_library_retention_run(catalog, mode="MANUAL")["conflict"] is True
+    prepare_library_retention_run_batch(catalog, run_id=created["run_id"])
+    begin_asset_retention_cleanup(catalog, asset_id=2201, now_ms=int(catalog.now_ms()), zero_location=True)
+    assert library_retention_preview(catalog)["zero_location_preview"]["eligible"] == 1
+    with catalog.write() as connection:
+        connection.execute("UPDATE library_retention_runs SET state='PARTIAL' WHERE run_id=?", (created["run_id"],))
+        connection.execute("UPDATE library_retention_run_items SET state='RUNNING',attempt_count=1 WHERE run_id=? AND asset_id=2201", (created["run_id"],))
+    from photo_search.app import create_app
+
+    factory = api_env.context._service_factory
+    assert api_env.context.close()
+    api_env.app = create_app(settings=api_env.settings, service_factory=factory)
+    api_env.context.resume_retention_cleanup_after_lock()
+    result = _run_retention_to_terminal(api_env, created["run_id"])
+    assert result["cleanup_scope"] == "ZERO_LOCATION"
+    assert (result["completed_assets"], result["skipped_assets"]) == (1, 1)
+    assert result["skipped_human_assets"] == 1
+    assert catalog.read_one("SELECT 1 FROM assets WHERE asset_id=2202") is not None
+
+
+def test_unknown_foreign_key_with_arbitrary_name_blocks_orphan_cleanup(api_env) -> None:
+    from photo_search.library_retention import library_retention_preview
+
+    catalog = api_env.service.catalog
+    _seed_asset(catalog, 2301)
+    with catalog.write() as connection:
+        connection.execute("CREATE TABLE future_links (target INTEGER REFERENCES ASSETS(asset_id))")
+    assert library_retention_preview(catalog)["zero_location_preview"] == {
+        "total": 1, "eligible": 0, "protected_or_active": 1,
+    }
+
+
+def test_unknown_cascade_reference_to_derived_row_is_not_deleted(api_env) -> None:
+    from photo_search.catalog.errors import CatalogError
+    from photo_search.library_retention import (
+        begin_asset_retention_cleanup,
+        library_retention_preview,
+    )
+
+    catalog = api_env.service.catalog
+    _seed_asset(catalog, 2302)
+    with catalog.write() as connection:
+        connection.execute("INSERT INTO asset_metadata(asset_id,time_source,time_confidence) VALUES(2302,'FILE_MTIME','LOW')")
+        connection.execute("CREATE TABLE future_notes (target INTEGER REFERENCES asset_metadata(asset_id) ON DELETE CASCADE, note TEXT)")
+        connection.execute("INSERT INTO future_notes VALUES(2302,'manual note')")
+    assert library_retention_preview(catalog)["zero_location_preview"]["eligible"] == 0
+    with pytest.raises(CatalogError, match="not currently safe"):
+        begin_asset_retention_cleanup(catalog, asset_id=2302, now_ms=10, zero_location=True)
+    assert catalog.read_one("SELECT note FROM future_notes")[0] == "manual note"
+    assert catalog.read_one("SELECT 1 FROM asset_retention_barriers WHERE asset_id=2302") is None
+
+
+def test_zero_location_preserves_immutable_machine_place_candidates(api_env) -> None:
+    from integration.test_p2_search_documents import add_suggestion
+    from photo_search.catalog.errors import CatalogError
+    from photo_search.library_retention import (
+        begin_asset_retention_cleanup,
+        library_retention_preview,
+    )
+
+    catalog = api_env.service.catalog
+    _seed_asset(catalog, 2303)
+    _seed_asset(catalog, 2304)
+    add_suggestion(catalog, 2303, display_name="synthetic suggestion")
+    with catalog.write() as connection:
+        connection.execute(
+            "INSERT INTO place_resolutions(resolution_id,asset_id,geo_fact_id,input_revision,control_revision_seen,"
+            "processor_id,dataset_id,dataset_version,config_hash,status,suggestion_revision,created_at) "
+            "VALUES('empty-resolution',2304,'empty-fact',?,0,'test','ds-1','1',?,'NO_CANDIDATE',0,5)",
+            ("a" * 64, "b" * 64),
+        )
+    assert library_retention_preview(catalog)["zero_location_preview"]["eligible"] == 0
+    for asset_id in (2303, 2304):
+        with pytest.raises(CatalogError, match="not currently safe"):
+            begin_asset_retention_cleanup(catalog, asset_id=asset_id, now_ms=10, zero_location=True)
+        assert catalog.read_one("SELECT 1 FROM asset_retention_barriers WHERE asset_id=?", (asset_id,)) is None
+    assert catalog.read_one("SELECT 1 FROM place_resolution_candidates WHERE resolution_id='res-2303'") is not None
+    assert catalog.read_one("SELECT 1 FROM assets WHERE asset_id=2303") is not None
+
+
+def test_zero_location_manual_person_avatar_blocks_and_revokes_barrier(api_env) -> None:
+    from photo_search.catalog.errors import CatalogError
+    from photo_search.library_retention import (
+        begin_asset_retention_cleanup,
+        finalize_asset_retention_cleanup,
+        library_retention_preview,
+    )
+
+    catalog = api_env.service.catalog
+    for asset_id in (2401, 2402):
+        _seed_asset(catalog, asset_id)
+    faces = {asset_id: hashlib.sha256(f"orphan-avatar-{asset_id}".encode()).hexdigest()
+             for asset_id in (2401, 2402)}
+    with catalog.write() as connection:
+        for asset_id, face_id in faces.items():
+            connection.execute(
+                "INSERT INTO faces(face_id,asset_id,spec_revision,detector_id,ordinal,input_revision,"
+                "location_id,bbox_json,landmarks_json,det_score,face_pixels,blur_variance,quality_state,"
+                "artifact_id,face_revision,created_at,updated_at) "
+                "VALUES(?,?,'face-v1','detector',0,?,NULL,'[0,0,10,10]','[]',0.9,100,10,'OK','derived',1,1,1)",
+                (face_id, asset_id, f"{asset_id:064x}"),
+            )
+        connection.execute(
+            "INSERT INTO persons(name,name_key,avatar_face_id,revision,created_at,updated_at) "
+            "VALUES('封面','nfc1:封面',?,1,1,1)", (faces[2401],),
+        )
+    preview = library_retention_preview(catalog)
+    assert preview["zero_location_preview"] == {"total": 2, "eligible": 1, "protected_or_active": 1}
+    assert next(row for row in preview["items"] if row["asset_id"] == 2401)["has_human_or_protected_references"]
+    with pytest.raises(CatalogError, match="not currently safe"):
+        begin_asset_retention_cleanup(catalog, asset_id=2401, now_ms=10, zero_location=True)
+    assert catalog.read_one("SELECT 1 FROM asset_retention_barriers WHERE asset_id=2401") is None
+    begin_asset_retention_cleanup(catalog, asset_id=2402, now_ms=11, zero_location=True)
+    with catalog.write() as connection:
+        connection.execute("UPDATE persons SET avatar_face_id=? WHERE name_key='nfc1:封面'", (faces[2402],))
+    result = finalize_asset_retention_cleanup(catalog, asset_id=2402, now_ms=12, zero_location=True)
+    assert result["state"] == "BLOCKED_RECHECK" and "人工人物封面" in result["blockers"]
+    assert catalog.read_one("SELECT 1 FROM assets WHERE asset_id=2402") is not None
+    assert catalog.read_one("SELECT 1 FROM asset_retention_barriers WHERE asset_id=2402") is None
+
+
+def test_zero_location_preserves_person_rename_undo_history(api_env, monkeypatch) -> None:
+    from photo_search.catalog.errors import CatalogError
+    from photo_search.library_retention import (
+        begin_asset_retention_cleanup,
+        library_retention_preview,
+    )
+    from photo_search.persons.operations import rename_person, undo_person_operation
+
+    catalog = api_env.service.catalog
+    _seed_asset(catalog, 2403)
+    _seed_asset(catalog, 2404)
+    face_id = hashlib.sha256(b"orphan-person-undo").hexdigest()
+    other_face_id = hashlib.sha256(b"orphan-unrelated-face").hexdigest()
+    with catalog.write() as connection:
+        connection.execute(
+            "INSERT INTO faces(face_id,asset_id,spec_revision,detector_id,ordinal,input_revision,location_id,"
+            "bbox_json,landmarks_json,det_score,face_pixels,blur_variance,quality_state,artifact_id,face_revision,created_at,updated_at) "
+            "VALUES(?,2403,'face-v1','detector',0,?,NULL,'[0,0,10,10]','[]',0.9,100,10,'OK','derived',1,1,1)",
+            (face_id, f"{2403:064x}"),
+        )
+        connection.execute(
+            "INSERT INTO faces(face_id,asset_id,spec_revision,detector_id,ordinal,input_revision,location_id,"
+            "bbox_json,landmarks_json,det_score,face_pixels,blur_variance,quality_state,artifact_id,face_revision,created_at,updated_at) "
+            "VALUES(?,2404,'face-v1','detector',0,?,NULL,'[0,0,10,10]','[]',0.9,100,10,'OK','derived',1,1,1)",
+            (other_face_id, f"{2404:064x}"),
+        )
+        person_id = int(connection.execute(
+            "INSERT INTO persons(revision,created_at,updated_at) VALUES(1,1,1)"
+        ).lastrowid)
+        connection.execute(
+            "INSERT INTO face_person_links(face_id,person_id,assignment_kind,decision,confidence,revision,created_at,updated_at) "
+            "VALUES(?,?,'AUTO','CONFIRMED',1,1,1,1)", (face_id, person_id),
+        )
+        operation = rename_person(connection, person_id=person_id, name="Family", request_id="orphan-rename",
+                                  expected_revision=1, now_ms=100)
+    assert library_retention_preview(catalog)["zero_location_preview"]["eligible"] == 1
+    # A bounded history-token cache overflow uses the same exact protection checks.
+    monkeypatch.setattr("photo_search.library_retention._HISTORY_TOKEN_LIMIT", 0)
+    assert library_retention_preview(catalog)["zero_location_preview"]["eligible"] == 1
+    with pytest.raises(CatalogError, match="not currently safe"):
+        begin_asset_retention_cleanup(catalog, asset_id=2403, now_ms=200, zero_location=True)
+    with catalog.write() as connection:
+        undone = undo_person_operation(connection, operation_id=operation["operation_id"],
+                                       request_id="orphan-undo", expected_operation_revision=operation["operation_revision"], now_ms=300)
+    assert undone["status"] == "COMMITTED"
+    assert catalog.read_one("SELECT 1 FROM faces WHERE face_id=?", (face_id,)) is not None
+
+
 def test_retention_one_click_scans_past_first_preview_page(api_env) -> None:
     from photo_search.library_retention import create_library_retention_run
 
@@ -473,11 +711,11 @@ def test_three_failed_attempts_finish_partial_and_next_click_retries_only_safe_f
     from photo_search import library_retention
     real_begin = library_retention.begin_asset_retention_cleanup
 
-    def fail_last_asset(current_catalog, *, asset_id, now_ms, manual_early=False):
+    def fail_last_asset(current_catalog, *, asset_id, now_ms, manual_early=False, zero_location=False):
         if asset_id == 25:
             raise CatalogError("INJECTED_FAILURE", "synthetic retry fault")
         return real_begin(
-            current_catalog, asset_id=asset_id, now_ms=now_ms, manual_early=manual_early
+            current_catalog, asset_id=asset_id, now_ms=now_ms, manual_early=manual_early, zero_location=zero_location
         )
 
     first = create_library_retention_run(catalog, mode="MANUAL")
@@ -823,6 +1061,7 @@ def test_library_retention_renderer_displays_classification_counts_and_next_page
             },
             "retention_time_evidence": "首次失效时间未知，不具备清理资格。",
             "retention_counts": {"OBSERVING": 2, "ELIGIBLE": 1, "BLOCKED": 1},
+            "zero_location_preview": {"total": 1, "eligible": 0, "protected_or_active": 1},
             "unresolved_source_anomalies": 1,
             "source_anomalies": [{"source_id": 7, "scan_id": 11, "baseline_present_assets": 12, "newly_missing_assets": 10}],
             "storage": {"sqlite_catalog_file_bytes": 128, "sqlite_logical_page_bytes": 256},
@@ -854,12 +1093,45 @@ def test_library_retention_renderer_displays_classification_counts_and_next_page
     result = subprocess.run(["node", "-e", harness], check=True, capture_output=True, text=True, encoding="utf-8")
     rendered = json.loads(result.stdout)
     assert "MISSING 位置 2" in rendered["text"]
+    assert "可人工清理 0" in rendered["text"]
+    assert "当前没有可人工清理的零位置资产" in rendered["text"]
     assert "待核实/受保护" in rendered["text"]
     assert "首次失效时间未知" in rendered["text"]
     assert "来源批量异常待核实 1" in rendered["text"]
     assert "10/扫描前有效资产 12" in json.dumps(rendered, ensure_ascii=False)
     assert "128 bytes" in rendered["text"]
     assert rendered["hidden"] is False
+
+
+def test_zero_location_cleanup_requires_preview_and_confirmation() -> None:
+    source = Path("src/photo_search/web/app.js").read_text(encoding="utf-8")
+    start = source.index("  function startZeroLocationCleanup()")
+    end = source.index("\n  function setLibraryRetentionAutomatic()", start)
+    code = source[start:end]
+    script = r'''
+const assert=require("assert/strict");
+let calls=[], confirms=0, accept=false, message="";
+const state={libraryRetention:{overview:null}};
+const els={libraryRetentionStatus:{},libraryRetentionCleanup:{},libraryRetentionZeroCleanup:{}};
+const window={confirm(){confirms++;return accept;}};
+function setStatus(_node,text){message=text;}
+function request(url,options){calls.push({url,options});return Promise.resolve({body:{}});}
+function loadLibraryRetention(){return Promise.resolve();}
+function pollLibraryRetentionRun(){return Promise.resolve();}
+function describe(x){return String(x);}
+''' + code + r'''
+(async()=>{
+  startZeroLocationCleanup();assert.match(message,/先重新检查/);assert.equal(confirms,0);
+  state.libraryRetention.overview={zero_location_preview:{total:1,eligible:0,protected_or_active:1}};
+  startZeroLocationCleanup();assert.match(message,/没有可清理/);assert.equal(confirms,0);
+  state.libraryRetention.overview.zero_location_preview={total:2,eligible:1,protected_or_active:1};
+  startZeroLocationCleanup();assert.equal(confirms,1);assert.equal(calls.length,0);
+  accept=true;startZeroLocationCleanup();await Promise.resolve();
+  assert.equal(calls.length,1);assert.deepEqual(calls[0].options.body,{confirmed:true,scope:"ZERO_LOCATION"});
+})().catch(e=>{console.error(e);process.exitCode=1;});
+'''
+    result = subprocess.run(["node", "-e", script], capture_output=True, text=True, encoding="utf-8")
+    assert result.returncode == 0, result.stderr
 
 
 def test_retention_observation_requires_each_source_and_post_expiry_success(api_env) -> None:
@@ -1146,7 +1418,7 @@ def test_archived_face_soft_anchor_remains_protected_after_face_and_content_chan
     if with_location:
         assert by_id[1]["classification"] == "包含人工信息或受保护引用"
         assert by_id[1]["reason"] == "人脸合集收录"
-    assert "不具备清理资格" in by_id[1]["retention_eligibility"]
+    assert ("不具备清理资格" if with_location else "受保护") in by_id[1]["retention_eligibility"]
     assert catalog.connection.total_changes == before
 
 
@@ -1378,6 +1650,22 @@ def test_retention_barrier_supports_bounded_synthetic_bulk_and_primary_key_looku
         assert "INTEGER PRIMARY KEY" in plan or "PRIMARY KEY" in plan
 
 
+def test_retention_asset_protection_and_vector_probes_use_asset_indexes(api_env) -> None:
+    connection = api_env.service.catalog.connection
+    cases = [
+        ("SELECT 1 FROM face_detail_batch_assets WHERE asset_id=? AND state IN ('QUEUED','RUNNING') LIMIT 1", "IDX_RETENTION_FACE_DETAIL_ASSET_STATE"),
+        ("SELECT 1 FROM face_redetection_groups WHERE asset_id=? LIMIT 1", "IDX_RETENTION_REDETECTION_GROUPS_ASSET"),
+        ("SELECT 1 FROM face_redetection_mappings WHERE asset_id=? LIMIT 1", "IDX_RETENTION_REDETECTION_MAPPINGS_ASSET"),
+        ("SELECT 1 FROM index_outbox WHERE asset_id=? AND event_type='DELETE_VECTOR' AND state<>'CONFIRMED' LIMIT 1", "IDX_RETENTION_OUTBOX_ASSET_EVENT_STATE"),
+        ("SELECT 1 FROM index_entries WHERE asset_id=? LIMIT 1", "IDX_RETENTION_ENTRIES_ASSET"),
+        ("SELECT 1 FROM persons WHERE avatar_face_id=? LIMIT 1", "IDX_RETENTION_PERSON_AVATAR"),
+        ("SELECT 1 FROM jobs INDEXED BY idx_jobs_subject WHERE subject_type='asset' AND subject_id=? AND state IN ('QUEUED','RUNNING','RETRY_WAIT') LIMIT 1", "IDX_JOBS_SUBJECT"),
+    ]
+    for sql, index in cases:
+        plan = " ".join(str(row["detail"]) for row in connection.execute("EXPLAIN QUERY PLAN " + sql, ("1",))).upper()
+        assert index in plan, (sql, plan)
+
+
 def test_retention_cleanup_waits_for_vectors_then_removes_machine_rows(api_env) -> None:
     from photo_search.library_retention import (
         begin_asset_retention_cleanup,
@@ -1512,6 +1800,41 @@ def test_finalize_retention_keeps_active_barrier_for_offline_source(api_env) -> 
         "SELECT 1 FROM asset_retention_barriers WHERE asset_id=914 AND state='ACTIVE'"
     ) is not None
     assert catalog.read_one("SELECT 1 FROM assets WHERE asset_id=914") is not None
+
+
+def test_automatic_finalize_rechecks_new_observation_period(api_env) -> None:
+    from photo_search.library_retention import (
+        begin_asset_retention_cleanup,
+        finalize_asset_retention_cleanup,
+    )
+    from photo_search.retention import (
+        invalidate_source_retention_evidence,
+        record_successful_source_scan,
+    )
+
+    catalog = api_env.service.catalog
+    root = api_env.tmp_path / "automatic-new-observation"
+    root.mkdir()
+    source_id = int(api_env.register_source("automatic-new-observation", root)["source_id"])
+    now = 100_000_000_000
+    _seed_retention_eligible(catalog, 2410, source_id, now_ms=now)
+    begin_asset_retention_cleanup(catalog, asset_id=2410, now_ms=now + 1)
+    # Exercise the real invalidated-scan and subsequent successful-scan path.
+    with catalog.write() as connection:
+        invalidate_source_retention_evidence(connection, source_id=source_id, now_ms=now + 2)
+        scan_id = int(connection.execute(
+            "INSERT INTO scan_runs(source_id,started_at,finished_at,state) VALUES(?,?,?,'SUCCEEDED')",
+            (source_id, now + 3, now + 3),
+        ).lastrowid)
+        connection.execute("UPDATE source_roots SET last_successful_scan=? WHERE source_id=?", (scan_id, source_id))
+        record_successful_source_scan(connection, source_id=source_id, scan_id=scan_id, now_ms=now + 3,
+                                      baseline_present_assets=0, newly_missing_assets=0)
+    assert catalog.read_one("SELECT state FROM asset_retention_state WHERE asset_id=2410")[0] == "OBSERVING"
+    result = finalize_asset_retention_cleanup(catalog, asset_id=2410, now_ms=now + 3, require_expired=True)
+    assert result["state"] == "BLOCKED_RECHECK"
+    assert any("30 天" in reason for reason in result["blockers"])
+    assert catalog.read_one("SELECT 1 FROM assets WHERE asset_id=2410") is not None
+    assert catalog.read_one("SELECT state FROM asset_retention_barriers WHERE asset_id=2410")[0] == "ACTIVE"
 
 
 def test_retry_revokes_active_barrier_when_human_favorite_appears(api_env) -> None:

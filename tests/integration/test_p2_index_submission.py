@@ -570,6 +570,43 @@ def test_retention_delete_vector_replays_on_real_lance_and_never_resurrects(
         ).fetchone()[0]), scheduled)
 
 
+def test_zero_location_vector_delete_replays_and_barrier_rejects_stale_publish(catalog: Catalog) -> None:
+    from photo_search.library_retention import (
+        begin_asset_retention_cleanup,
+        finalize_asset_retention_cleanup,
+    )
+
+    _, asset_id = submit_embedding(catalog, artifact_id="zero-location-recovery")
+    coordinator = IndexCoordinator(catalog)
+    assert coordinator.process_next(now_ms=2000)
+    generation = generation_id_for(SPACE, PROCESSOR)
+    first = begin_asset_retention_cleanup(catalog, asset_id=asset_id, now_ms=2100, zero_location=True)
+    assert first["state"] == "WAITING_FOR_VECTOR_DELETE"
+    events = first["delete_event_ids"]
+    assert events
+    with catalog.write() as connection:
+        connection.execute("UPDATE index_outbox SET state='PENDING' WHERE asset_id=? AND event_type='UPSERT_VECTOR'", (asset_id,))
+    assert begin_asset_retention_cleanup(catalog, asset_id=asset_id, now_ms=2101, zero_location=True)["delete_event_ids"] == events
+    with pytest.raises(RuntimeError, match="after_vector_delete"):
+        coordinator.process_retention_deletes(asset_id=asset_id, now_ms=2200, limit=10, failpoint="after_vector_delete")
+    assert finalize_asset_retention_cleanup(catalog, asset_id=asset_id, now_ms=2201, zero_location=True)["state"] == "WAITING_FOR_VECTOR_DELETE"
+    path, root = catalog.db_path, catalog.data_root
+    catalog.close()
+    reopened = Catalog.open(path, data_root=root, lease_seconds=60)
+    try:
+        restarted = IndexCoordinator(reopened)
+        assert restarted.process_retention_deletes(asset_id=asset_id, now_ms=2300, limit=10) == len(events)
+        assert reopened.read_one("SELECT COUNT(*) FROM index_outbox WHERE asset_id=? AND event_type='DELETE_VECTOR' AND state='CONFIRMED'", (asset_id,))[0] == len(events)
+        assert restarted.index.count(generation_id=generation, dimension=DIMENSION, space_id=SPACE) == 0
+        assert restarted.process_next(now_ms=2300) is False
+        assert finalize_asset_retention_cleanup(reopened, asset_id=asset_id, now_ms=2301, zero_location=True)["state"] == "COMPLETE"
+        assert begin_asset_retention_cleanup(reopened, asset_id=asset_id, now_ms=2302, zero_location=True)["state"] == "COMPLETE"
+        assert restarted.process_next(now_ms=2400) is False
+        assert restarted.index.count(generation_id=generation, dimension=DIMENSION, space_id=SPACE) == 0
+    finally:
+        reopened.close()
+
+
 def test_retention_cleanup_service_waits_for_lance_then_cancels_on_restore(catalog: Catalog) -> None:
     from photo_search.library_retention import (
         begin_asset_retention_cleanup,

@@ -144,6 +144,7 @@ class RetentionCleanupRunner:
                             result = begin_asset_retention_cleanup(
                                 catalog, asset_id=asset_id, now_ms=stamp,
                                 manual_early=str(run["mode"]) == "MANUAL",
+                                zero_location=str(run["cleanup_scope"]) == "ZERO_LOCATION" and str(run["mode"]) == "MANUAL",
                             )
                             if result.get("state") not in {
                                 "COMPLETE", "CANCELLED_RESTORED", "CANCELLED_PROTECTED", "BLOCKED_RECHECK"
@@ -178,7 +179,9 @@ class RetentionCleanupRunner:
                                         details={"pending_delete_events": pending, "blocking_reason": reason},
                                     )
                                 result = finalize_asset_retention_cleanup(
-                                    catalog, asset_id=asset_id, now_ms=int(catalog.now_ms())
+                                    catalog, asset_id=asset_id, now_ms=int(catalog.now_ms()),
+                                    zero_location=str(run["cleanup_scope"]) == "ZERO_LOCATION" and str(run["mode"]) == "MANUAL",
+                                    require_expired=str(run["mode"]) == "AUTOMATIC",
                                 )
 
                             state = str(result.get("state"))
@@ -271,9 +274,9 @@ class RetentionCleanupRunner:
     @staticmethod
     def _outcome_category(reason: str) -> str:
         text = str(reason)
-        if any(token in text for token in ("人工", "收藏", "备注", "标签", "人物", "纠错", "排除", "合集", "隐藏")):
+        if any(token in text for token in ("人工", "收藏", "备注", "标签", "人物", "纠错", "排除", "合集", "隐藏", "活动任务", "任务进行中", "批次进行中", "引用")):
             return "HUMAN"
-        if any(token in text for token in ("来源", "扫描", "复核", "MISSING", "PRESENT", "失效", "异常", "副本", "离线")):
+        if any(token in text for token in ("来源", "扫描", "复核", "MISSING", "PRESENT", "失效", "异常", "副本", "离线", "位置")):
             return "SOURCE"
         return "OTHER"
 

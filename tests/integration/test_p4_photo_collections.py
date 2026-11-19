@@ -465,11 +465,17 @@ def test_filter_save_rechecks_catalog_revision_before_create(api_env):
 
 @pytest.mark.parametrize("asset_count", [5000, 5001])
 def test_all_filter_save_enforces_5000_candidate_limit_atomically(api_env, asset_count):
+    source_id = int(api_env.register_source()["source_id"])
     with api_env.service.catalog.write() as connection:
         connection.executemany(
             "INSERT INTO assets(sha256,byte_size,created_at,state) VALUES(?,1,1700000000000,'ACTIVE')",
             [(hashlib.sha256(f"photo-collection-{index}".encode()).hexdigest(),)
              for index in range(asset_count)],
+        )
+        connection.execute(
+            "INSERT INTO file_locations(source_id,relative_path,path_key,asset_id,size,mtime_ns,availability) "
+            "SELECT ?, 'synthetic-'||asset_id||'.jpg', 'synthetic-'||asset_id||'.jpg', asset_id,1,1,'PRESENT' FROM assets",
+            (source_id,),
         )
 
     async def scenario(client):

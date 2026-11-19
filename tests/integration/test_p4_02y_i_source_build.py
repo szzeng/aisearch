@@ -557,6 +557,48 @@ def test_daily_refresh_confirms_pending_semantic_artifact_without_reencoding(
 
 
 # --------------------------------------------------------------------- §5 deleting a source
+def test_partial_build_source_removal_then_confirmed_orphan_cleanup(tmp_path: Path) -> None:
+    import asyncio
+
+    (tmp_path / "library").mkdir(parents=True, exist_ok=True)
+    env = RefreshEnv.build(tmp_path, photos=0, adapter=StubPinnedAdapter(), manifest=MANIFEST)
+    try:
+        mixed = tmp_path / "orphan-mixed"
+        write_jpeg(mixed / "good.jpg", noise=97)
+        write_jpeg(mixed / "broken.jpg", noise=98)
+        source_id = register_source(env, "orphan mixed", mixed)
+        before = directory_summary(mixed)
+        status = run(env, mode="build", source_ids=[source_id])
+        assert status["state"] == "PARTIAL_FAILED"
+        assert source_payload(env, source_id)["progress"]["stages"]["semantic"]["confirmed"] == 1
+        env.adapter.vectors["good"] = query_vector_for(mixed / "good.jpg")
+        assert env.search_payload({"request_id": "orphan-before", "text": "good", "availability": "present", "page_size": 5})["hits"]
+        encoded = list(env.adapter.image_calls)
+        code, result = delete_source(env, source_id)
+        assert code == 200 and result["assets_orphaned"] == 2
+        assert not env.search_payload({"request_id": "orphan-after", "text": "good", "availability": "present", "page_size": 5})["hits"]
+
+        async def cleanup(client: AsyncClient) -> dict:
+            csrf = await env.authenticate(client)
+            preview = await client.get("/api/v1/storage/library-retention")
+            assert preview.json()["zero_location_preview"]["total"] == 2
+            response = await client.post("/api/v1/storage/library-retention/cleanup", json={"confirmed": True, "scope": "ZERO_LOCATION"}, headers=env.post_headers(csrf))
+            assert response.status_code == 200, response.text
+            for _ in range(1000):
+                progress = await client.get("/api/v1/storage/library-retention/runs/" + response.json()["run_id"])
+                if progress.json()["run"]["state"] not in {"QUEUED", "RUNNING"}:
+                    return progress.json()["run"]
+                await asyncio.sleep(0.01)
+            raise AssertionError("cleanup did not finish")
+
+        result = env.scenario(cleanup)
+        assert (result["checked_assets"], result["completed_assets"], result["failed_assets"]) == (2, 2, 0)
+        assert list(env.adapter.image_calls) == encoded
+        assert directory_summary(mixed) == before
+    finally:
+        env.close()
+
+
 def test_an_unbuilt_and_a_built_source_can_both_be_deleted(tmp_path: Path) -> None:
     """§6.8: deletion works before and after a build, and the source disappears immediately."""
     env = RefreshEnv.build(tmp_path, photos=3, adapter=StubPinnedAdapter(), manifest=MANIFEST)
@@ -646,6 +688,11 @@ def test_deleting_a_source_keeps_the_asset_shared_with_another_source(tmp_path: 
             }
         )
         assert shared_asset in [int(item["asset_id"]) for item in found["hits"]]
+        from photo_search.library_retention import create_library_retention_run
+
+        cleanup = create_library_retention_run(env.service().catalog, mode="MANUAL", cleanup_scope="ZERO_LOCATION")
+        assert cleanup["state"] == "COMPLETE"
+        assert env.service().catalog.read_one("SELECT 1 FROM assets WHERE asset_id=?", (shared_asset,)) is not None
     finally:
         env.close()
 

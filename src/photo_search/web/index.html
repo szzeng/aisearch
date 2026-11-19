@@ -17,7 +17,7 @@
     <script src="/web/photo-timeline.js?v=p4-ui2-copy-daily-ux-1" defer></script>
     <script src="/web/search-scope-entry.js?v=p4-photo-collection-a-1" defer></script>
     <script src="/web/scroll-pager.js?v=p4-ui2-scroll-load-a-4" defer></script>
-    <script src="/web/app.js?v=p4-semantic-recovery-1" defer></script>
+    <script src="/web/app.js?v=p4-orphan-cleanup-1" defer></script>
       <script src="/web/shell-sticky.js?v=p4-ui2-shell-sticky-a-1" defer></script>
   </head>
 <body class="app-shell">
@@ -181,7 +181,7 @@
               </section>
               <section id="storage-panel-retention" class="storage-tab-panel" role="tabpanel" aria-labelledby="storage-tab-retention" hidden>
                 <div class="storage-panel-heading"><div><h3 id="storage-retention-title">失效照片与数据占用</h3><p class="hint">自动分批清除所有符合条件的失效照片，每批最多 20 张。手动清理可跳过 30 天等待，但仍需可靠扫描确认。不会删除原图及受保护的人工记录。受管缓存需在应用停止后回收。</p></div><button type="button" id="library-retention-refresh">重新检查</button></div>
-                <div class="storage-retention-actions"><label><input type="checkbox" id="library-retention-automatic" /> 开启 30 天后自动清理</label><button type="button" id="library-retention-cleanup">一键清除失效照片</button></div>
+                <div class="storage-retention-actions"><label><input type="checkbox" id="library-retention-automatic" /> 开启 30 天后自动清理</label><button type="button" id="library-retention-cleanup">一键清除失效照片</button><button type="button" id="library-retention-zero-cleanup">清理零位置资产</button></div>
                 <pre id="library-retention-status" class="state-block" role="status" aria-live="polite"></pre>
                 <div id="library-retention-anomalies" class="storage-retention-anomalies" aria-live="polite"></div>
                 <button type="button" id="library-retention-more" hidden>继续读取</button>

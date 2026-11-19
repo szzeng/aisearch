@@ -100,15 +100,15 @@ def test_schema43_backup_restore_preserves_human_facts_vectors_and_originals(
     assert library.catalog.schema_version == 41
     library.close()
 
-    # Apply the production 0042 and 0043 migrations to the closed 41 catalog.
+    # Apply the production migrations to the closed 41 catalog.
     monkeypatch.undo()
     migration = migrate_database(data_root=data_root)
     assert migration.previous_version == 41
-    assert migration.schema_version == 43
-    assert migration.applied == (42, 43)
+    assert migration.schema_version == 44
+    assert migration.applied == (42, 43, 44)
 
     with Catalog.open(data_root=data_root) as catalog:
-        assert catalog.schema_version == 43
+        assert catalog.schema_version == 44
         spec = embedding_spec()
         scheduler = configured_scheduler(catalog, [spec])
         index_vector(
@@ -195,14 +195,14 @@ def test_schema43_backup_restore_preserves_human_facts_vectors_and_originals(
     assert rejected.value.code == "BACKUP_SCHEMA_MISMATCH"
     assert list(mismatch_target.iterdir()) == []
     assert not list(tmp_path.glob(".mismatch-restore-root.restore-staging-*"))
-    assert int(json.loads((bundle / MANIFEST_NAME).read_text(encoding="utf-8"))["schema_version"]) == 43
+    assert int(json.loads((bundle / MANIFEST_NAME).read_text(encoding="utf-8"))["schema_version"]) == 44
 
     restored_root = tmp_path / "empty-restore-root"
     restored_root.mkdir()
     restored = restore_backup(bundle=bundle, data_root=restored_root)
-    assert restored["status"] == "ok" and restored["schema_version"] == 43
+    assert restored["status"] == "ok" and restored["schema_version"] == 44
     with Catalog.open(data_root=restored_root) as catalog:
-        assert catalog.schema_version == 43
+        assert catalog.schema_version == 44
         assert _human_facts(catalog, asset_id) == facts_before
         assert _vector_facts(catalog, asset_id) == vector_before
         query_after = search_assets(

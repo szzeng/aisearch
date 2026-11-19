@@ -1008,7 +1008,7 @@ def _seed_legacy_smart_cache(db_path: Path) -> None:
 def test_photo_smart_policy_migration_creates_nullable_identity_in_new_catalog(tmp_path: Path) -> None:
     db_path = _db_path(tmp_path)
     migrated = migrate_database(db_path, data_root=_data_root(tmp_path))
-    assert migrated.schema_version == 43
+    assert migrated.schema_version == 44
     connection = open_readonly(db_path)
     try:
         columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(photo_smart_cache_state)")}
@@ -1025,7 +1025,7 @@ def test_photo_smart_policy_migration_preserves_legacy_rule_exclusions_and_cache
     _create_historical_catalog(db_path, 42)
     _seed_legacy_smart_cache(db_path)
     migrated = migrate_database(db_path, data_root=_data_root(tmp_path))
-    assert migrated.previous_version == 42 and migrated.applied == (43,)
+    assert migrated.previous_version == 42 and migrated.applied == (43, 44)
     connection = open_readonly(db_path)
     try:
         cache = connection.execute(
@@ -1067,6 +1067,35 @@ def test_photo_smart_policy_migration_failure_rolls_back_column_and_preserves_ca
             "SELECT build_id FROM photo_smart_cache_state WHERE smart_id=1"
         ).fetchone()[0] == "legacy-build"
         assert connection.execute("SELECT COUNT(*) FROM photo_smart_exclusions WHERE smart_id=1").fetchone()[0] == 1
+    finally:
+        connection.close()
+
+
+def test_retention_scope_0044_upgrade_and_failure_rollback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    db_path = _db_path(tmp_path)
+    _create_historical_catalog(db_path, 43)
+    _seed_legacy_smart_cache(db_path)
+    connection = connect_rw(db_path)
+    connection.execute("INSERT INTO library_retention_runs(run_id,mode,state,stage,created_at_ms,updated_at_ms) VALUES('old-run','MANUAL','COMPLETE','done',1,1)")
+    connection.commit()
+    connection.close()
+    broken = tmp_path / "migrations-0044-broken"
+    shutil.copytree(schema.MIGRATIONS_DIR, broken)
+    migration = broken / "0044_retention_run_scope.sql"
+    migration.write_text(migration.read_text(encoding="utf-8") + "\nSELECT injected_scope_fault;\n", encoding="utf-8")
+    with monkeypatch.context() as patch:
+        patch.setattr(schema, "MIGRATIONS_DIR", broken)
+        with pytest.raises(CatalogError) as failure:
+            migrate_database(db_path, data_root=_data_root(tmp_path))
+        assert failure.value.code == MIGRATION_FAILED
+        assert inspect_database(db_path) == 43
+    upgraded = migrate_database(db_path, data_root=_data_root(tmp_path))
+    assert upgraded.previous_version == 43 and upgraded.applied == (44,)
+    connection = open_readonly(db_path)
+    try:
+        assert connection.execute("SELECT cleanup_scope FROM library_retention_runs WHERE run_id='old-run'").fetchone()[0] == "MISSING"
+        assert connection.execute("SELECT COUNT(*) FROM photo_smart_exclusions WHERE smart_id=1").fetchone()[0] == 1
+        assert list(connection.execute("PRAGMA foreign_key_check")) == []
     finally:
         connection.close()
 

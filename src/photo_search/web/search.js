@@ -1499,7 +1499,7 @@
     state.search.binding = null;
     els.queryText.value = "";
     els.querySource.value = "";
-    els.queryAvailability.value = "any";
+    els.queryAvailability.value = "present";
     els.queryPlaceState.value = "any";
     els.queryPlaceIds.value = "";
     els.queryDescendants.value = "true";
@@ -1715,6 +1715,7 @@
   }
 
   function submitSearch() {
+    if (state.search.mode === "asset_image") els.queryAvailability.value = "present";
     var filters = collectFilters();
     if (filters.problem) {
       setStatus(els.queryStatus, filters.problem, "error");
@@ -4061,6 +4062,7 @@
       return;
     }
     if (state.search.loading) return;
+    var previousAvailability = els.queryAvailability.value;
     var previous = {
       mode: state.search.mode, sessionId: state.search.sessionId, cursor: state.search.cursor,
       count: state.search.count, total: state.search.total, binding: state.search.binding,
@@ -4071,6 +4073,7 @@
       imageFile: state.search.imageFile,
     };
     clearSimilarAssetUrl();
+    if (state.search.mode === "asset_image") els.queryAvailability.value = "present";
     state.search.assetQueryId = null;
     state.search.assetQuery = null;
     setSimilarQueryControls(false);
@@ -4092,6 +4095,7 @@
           return;
         }
         state.search.mode = previous.mode;
+        els.queryAvailability.value = previousAvailability;
         state.search.assetQueryId = previous.assetQueryId;
         state.search.assetQuery = previous.assetQuery;
         setSimilarQueryControls(previous.mode === "asset_image");
@@ -4120,7 +4124,7 @@
     var plan = state.search.intentPlan;
     var placeAware = state.search.placeAware;
     if (!(state.search.selectedScope && state.search.selectedScope.kind === "source")) els.querySource.value = "";
-    els.queryAvailability.value = "any";
+    els.queryAvailability.value = "present";
     els.queryPlaceState.value = "any";
     els.queryPlaceIds.value = "";
     els.queryDescendants.value = "true";

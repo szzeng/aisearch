@@ -1,4 +1,8 @@
-## Current task: P4-SEMANTIC-FAILED-JOBS-RECOVERY（2026-11-19）
+## Current task: P4-ORPHAN-ASSET-CLEANUP-FIX（2026-11-19）
+
+**IMPLEMENTED / SOL REVIEW PASS / BROWSER PENDING**：搜索默认 PRESENT；零位置资产经明确预览和确认后分批复核清理，复用持久 scope、屏障和向量删除协议。最终定向 169 项通过，增强 catalog 重开后的清理及索引组合 65 项通过；最终产品全量 3,879 项，23 个历史失败、52 skipped、无新增失败。按用户指定独立 Sol 完整影响面复核无剩余代码阻断项；内置浏览器真实页面验收仍待完成。未清理真实图库。详见[任务卡](tasks/P4-ORPHAN-ASSET-CLEANUP-FIX.md)和[报告](reports/P4-ORPHAN-ASSET-CLEANUP-FIX.md)。
+
+## Previous task: P4-SEMANTIC-FAILED-JOBS-RECOVERY（2026-11-19）
 
 **IMPLEMENTED / SOL REVIEW PASS / ACCEPTANCE PENDING**。候选按当前版本、PRESENT 位置和向量确认情况区分有效失败与历史失效。独立 Sol 发现的待确认向量续接、退避及上限、复扫恢复、并发范围判定问题已修复，修复后 **9 项定向测试全通过**，复审无阻塞项。浏览器连接超时，页面验收待完成。详见[任务卡](tasks/P4-SEMANTIC-FAILED-JOBS-RECOVERY.md)和[报告及升级恢复步骤](reports/P4-SEMANTIC-FAILED-JOBS-RECOVERY.md)。未访问用户图库。
 
