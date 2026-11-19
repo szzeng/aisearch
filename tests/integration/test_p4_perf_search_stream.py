@@ -52,7 +52,7 @@ class Catalog:
         return self.connection.execute(sql, parameters).fetchall()
 
 
-def database(path: str | Path = ":memory:", count: int = 12) -> Catalog:
+def database(path: str | Path = ":memory:", count: int = 12, *, with_locations: bool = True) -> Catalog:
     connection = sqlite3.connect(path, isolation_level=None, factory=Connection)
     connection.row_factory = sqlite3.Row
     connection.executescript(
@@ -67,6 +67,11 @@ def database(path: str | Path = ":memory:", count: int = 12) -> Catalog:
     )
     connection.executemany("INSERT INTO assets VALUES (?)", [(i,) for i in range(1, count + 1)])
     connection.executemany("INSERT INTO eligible VALUES (?)", [(i,) for i in range(1, count + 1)])
+    if with_locations:
+        connection.executemany(
+            "INSERT INTO file_locations VALUES (?, 1, ?, 'PRESENT')",
+            [(i, f"photo-{i}.jpg") for i in range(1, count + 1)],
+        )
     connection.executemany(
         "INSERT INTO index_entries VALUES (?, 'g', 's', 'CONFIRMED')",
         [(i,) for i in range(1, count + 1)],
@@ -202,8 +207,8 @@ def test_wal_write_during_stream_is_seen_by_live_recheck_after_close(tmp_path: P
         catalog.connection.close()
 
 
-def test_global_count_preserves_legacy_shared_nonimage_missing_and_null_locations() -> None:
-    catalog = database(count=8)
+def test_global_count_checks_shared_nonimage_missing_and_orphan_locations() -> None:
+    catalog = database(count=8, with_locations=False)
     rows = [
         (1, 1, "a.JPG", "PRESENT"), (1, 2, "a.txt", "PRESENT"),
         (2, 1, "b.mp4", "PRESENT"), (3, 1, "c.txt", "MISSING"),
@@ -215,10 +220,10 @@ def test_global_count_preserves_legacy_shared_nonimage_missing_and_null_location
     catalog.connection.executemany("INSERT INTO file_locations VALUES (?,?,?,?)", rows)
     try:
         expected = {
-            retrieval.SearchScope(): [1, 4, 5, 7, 8],
+            retrieval.SearchScope(): [1, 4, 7, 8],
             retrieval.SearchScope(source_id=1): [1, 4, 7],
             retrieval.SearchScope(source_id=2): [8],
-            retrieval.SearchScope(availability="missing"): [5],
+            retrieval.SearchScope(availability="missing"): [],
             retrieval.SearchScope(availability="present"): [1, 4, 7, 8],
             retrieval.SearchScope(album_asset_ids=()): [],
             retrieval.SearchScope(additional_condition_sql="a.asset_id>=7"): [7, 8],

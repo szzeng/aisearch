@@ -265,6 +265,7 @@ def _member_fixture() -> sqlite3.Connection:
     connection.executescript(
         "CREATE TABLE assets (asset_id INTEGER PRIMARY KEY);"
         "CREATE TABLE file_locations (asset_id INTEGER, source_id INTEGER, availability TEXT, relative_path TEXT);"
+        "CREATE INDEX idx_file_locations_asset ON file_locations(asset_id);"
         "CREATE TABLE faces (face_id TEXT PRIMARY KEY, asset_id INTEGER NOT NULL, "
         "spec_revision TEXT DEFAULT 'ordinary', input_revision TEXT DEFAULT 'fixture');"
         "CREATE TABLE face_person_links (face_id TEXT, person_id INTEGER, decision TEXT, "
@@ -276,6 +277,7 @@ def _member_fixture() -> sqlite3.Connection:
         "CREATE TABLE catalog_filter_revision (revision_id INTEGER PRIMARY KEY, revision INTEGER);"
         "CREATE TABLE place_suggestion_revision (revision_id INTEGER PRIMARY KEY, revision INTEGER);"
         "INSERT INTO assets VALUES (1), (2), (3), (4);"
+        "INSERT INTO file_locations SELECT asset_id, 1, 'PRESENT', asset_id || '.jpg' FROM assets;"
         "INSERT INTO catalog_filter_revision VALUES (1, 1);"
         "INSERT INTO place_suggestion_revision VALUES (1, 0);"
     )

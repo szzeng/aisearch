@@ -220,8 +220,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--retry-failed",
         action="store_true",
         help=(
-            "rewind the finished jobs of the selected targets (FAILED, CANCELLED, BLOCKED, "
-            "RETRY_WAIT or SUCCEEDED) back to QUEUED instead of leaving them behind"
+            "rewind eligible FAILED, CANCELLED and BLOCKED jobs of the selected targets "
+            "back to QUEUED, respecting active retry backoff"
         ),
     )
     return parser
@@ -356,6 +356,7 @@ def run_command(args: argparse.Namespace) -> int:
                         processor_id=str(spec.processor_id),
                         source_id=getattr(args, "source_id", None),
                         limit=limit,
+                        retry_failed=bool(getattr(args, "retry_failed", False)),
                     )
                     targets = selection["targets"]
                     _emit(

@@ -15,6 +15,7 @@ from typing import Any
 
 from conftest import write_jpeg
 from httpx import AsyncClient
+from pytest import MonkeyPatch
 
 from integration.test_p4_02y_library_refresh import (
     MANIFEST,
@@ -532,6 +533,29 @@ def test_the_daily_source_refresh_still_only_processes_the_change(tmp_path: Path
         env.close()
 
 
+def test_daily_refresh_confirms_pending_semantic_artifact_without_reencoding(
+    tmp_path: Path, monkeypatch: MonkeyPatch,
+) -> None:
+    adapter = StubPinnedAdapter()
+    env = RefreshEnv.build(tmp_path, photos=3, adapter=adapter, manifest=MANIFEST)
+    try:
+        assert run(env, mode="build", source_ids=[1])["search_ready"] is True
+        write_jpeg(env.library / "pending.jpg", noise=91)
+        with monkeypatch.context() as fault:
+            fault.setattr(semantic, "drain_semantic_outbox", lambda *_args, **_kwargs: {})
+            assert run(env, mode="refresh", source_ids=[1])["search_ready"] is False
+        before = list(adapter.image_calls)
+        assert len(before) == 4
+        assert source_payload(env, 1)["progress"]["stages"]["semantic"]["pending"] == 1
+
+        assert run(env, mode="refresh", source_ids=[1])["search_ready"] is True
+        assert adapter.image_calls == before
+        progress = source_payload(env, 1)["progress"]["stages"]["semantic"]
+        assert (progress["confirmed"], progress["pending"]) == (4, 0)
+    finally:
+        env.close()
+
+
 # --------------------------------------------------------------------- §5 deleting a source
 def test_an_unbuilt_and_a_built_source_can_both_be_deleted(tmp_path: Path) -> None:
     """§6.8: deletion works before and after a build, and the source disappears immediately."""
@@ -1037,7 +1061,8 @@ def test_the_sources_page_carries_the_unified_build_and_sync_entries(tmp_path: P
         assert "semantic-confirmed-nothing" in served["script"]
         assert "已扫描，无可索引图片" in served["script"]
         assert "无法建立语义索引" in served["script"]
-        assert "张无法编码" in served["script"]
+        assert "张当前有效照片编码失败" in served["script"]
+        assert "历史失效任务" in served["script"]
         # A stage that has run no task is rendered 未开始, and outstanding-but-idle work is
         # 待处理 - the two words the review follow-up asked for.
         assert "NOT_STARTED: \"未开始\"" in served["script"]

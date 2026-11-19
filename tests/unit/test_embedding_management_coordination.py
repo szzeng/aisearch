@@ -272,10 +272,9 @@ def test_candidate_build_uses_a_bounded_batch_without_activating_profile(
     assert completed["confirmed_entries"] == 1
     assert resumed["status"] == "RUNNING"
     assert len(build_calls) == 2
-    assert all(call["retry_failed"] is False for call in build_calls)
+    assert all(call["retry_failed"] is True for call in build_calls)
     assert calls["limit"] == 100
     assert calls["batch_size"] == 100
-    assert calls["retry_failed"] is False
     assert calls["activate_if_unset"] is False
     assert encoder_close_gate_states == [True, True]
     assert started["status"] == "RUNNING"

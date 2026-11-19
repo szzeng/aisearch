@@ -175,15 +175,25 @@ def summarise(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
 def seed_catalog(catalog: Catalog, data: dict[str, Any]) -> None:
     """Seed synthetic *derived* text, then let real schema triggers build the FTS index.
 
-    This deliberately does not measure scanner/OCR/place-assignment correctness. No
-    locations are registered: the official photo scope includes legacy no-location rows.
+    Catalog locations are synthetic metadata used by the production search eligibility
+    predicate. The fixture exercises FTS without creating or scanning original files.
     """
     with catalog.write() as connection:
+        source = connection.execute(
+            "INSERT INTO source_roots(display_name, root_path, status) VALUES (?, ?, 'ONLINE')",
+            ("Evaluation fixture", str(Path(catalog.data_root) / "fictional-source")),
+        ).lastrowid
         for row in data["documents"]:
             asset_id = row["asset_id"]
             connection.execute(
                 "INSERT INTO assets(asset_id,sha256,byte_size,created_at) VALUES (?,?,0,0)",
                 (asset_id, digest(row)),
+            )
+            name = f"asset-{asset_id}.jpg"
+            connection.execute(
+                "INSERT INTO file_locations(source_id,relative_path,path_key,asset_id,size,mtime_ns,availability) "
+                "VALUES (?,?,?,?,0,0,'PRESENT')",
+                (source, name, name, asset_id),
             )
             columns = {column: tokens.index_text(row.get(column, "")) for column in TEXT_COLUMNS}
             connection.execute(

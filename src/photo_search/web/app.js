@@ -1305,7 +1305,7 @@
     var text = String(semantic.confirmed) + " / " + String(semantic.total);
     var notes = [];
     if (Number(semantic.failed) > 0) {
-      notes.push(String(semantic.failed) + " 张无法编码");
+      notes.push(String(semantic.failed) + " 张当前有效照片编码失败");
     }
     if (Number(semantic.queued) > 0) {
       notes.push(String(semantic.queued) + " 项排队中");
@@ -1325,12 +1325,12 @@
     // A refused image never becomes searchable and never blocks the rest (P4-02Y's own rule),
     // but the card must not promise a bare "可以搜索" while hiding it (review F1).
     if (semantic.state === "SEARCHABLE" && Number(semantic.failed) > 0) {
-      return "✓ 可以搜索，" + String(semantic.failed) + " 张无法编码（其余不受影响）";
+      return "✓ 可以搜索，" + String(semantic.failed) + " 张当前有效照片编码失败";
     }
     if (semantic.state === "UNINDEXABLE") {
       return (
         "无法建立语义索引：" + String(semantic.total) +
-        " 张图片均无法编码（修好文件后再刷新）"
+        " 张当前有效照片编码失败（检查文件或模型后重试）"
       );
     }
     return SEMANTIC_STATE_TEXT[semantic.state] || String(semantic.state);
@@ -1693,7 +1693,7 @@
       : (unfinished
         ? "尚未完成建立语义索引（可再次点击继续）"
         : (refusedAll
-          ? "没有图片建立语义索引：这些图片都无法编码（可修好文件后再刷新）"
+          ? "当前有效照片编码失败（检查文件或模型后重试）"
           : (REFRESH_STATE_TEXT[status.state] || String(status.state || ""))));
     var activityLines = status.running ? refreshActivityText(status) : null;
     var parts = [];
@@ -1705,7 +1705,7 @@
       : (unfinished
         ? "尚未完成建立语义索引（可再次点击继续）"
         : (refusedAll
-          ? "没有图片建立语义索引：这些图片都无法编码（可修好文件后再刷新）"
+          ? "当前有效照片编码失败（检查文件或模型后重试）"
           : ""));
     if (stateNote) {
       parts.push(stateNote);
@@ -3551,6 +3551,30 @@
     if (state.currentView !== "sources" || document.hidden) return;
     embeddingTaskPollTimer = window.setTimeout(pollEmbeddingTaskProgress, 1500);
   }
+  function candidateBuildResultText(task) {
+    var progress = task.job_progress || {};
+    var parts = ["候选建库结果：" + task.status];
+    if (task.last_error) parts.push(String(task.last_error.code || "未知错误"));
+    if (Number(progress.failed) > 0) {
+      parts.push("当前有效照片编码失败 " + Number(progress.failed) + " 张");
+    }
+    if (Number(progress.pending) > 0) {
+      parts.push("等待编码或确认 " + Number(progress.pending) + " 张");
+    }
+    if (Number(progress.historical_failed) > 0) {
+      parts.push("历史失效任务 " + Number(progress.historical_failed) + " 条");
+    }
+    var labels = {
+      SOURCE_FILE_MISSING: "源文件缺失",
+      INPUT_UNSTABLE: "源文件已变化，需重新扫描",
+      RUNTIME_CAPABILITY_UNAVAILABLE: "模型运行时不可用",
+      RUNTIME_RESOLUTION_MISMATCH: "编码器或向量规格异常",
+    };
+    Object.keys(progress.errors || {}).forEach(function (code) {
+      parts.push((labels[code] || code) + " " + Number(progress.errors[code]) + " 项");
+    });
+    return parts.join("，");
+  }
   function pollEmbeddingTaskProgress() {
     embeddingTaskPollTimer = null;
     if (state.currentView !== "sources" || document.hidden || embeddingTaskPollRequest) return;
@@ -3790,9 +3814,9 @@
         if (task && ["RUNNING", "PAUSE_REQUESTED"].indexOf(task.status) >= 0) {
           activeEl.textContent += "；候选建库：" + task.status + "，已确认向量 " + Number(task.confirmed_entries || 0);
           scheduleEmbeddingTaskPoll();
-        } else if (task && task.last_error) {
+        } else if (task) {
           stopEmbeddingTaskPoll();
-          activeEl.textContent += "；候选建库结果：" + task.status + "（" + String(task.last_error.code || "未知错误") + "）";
+          activeEl.textContent += "；" + candidateBuildResultText(task);
         } else stopEmbeddingTaskPoll();
       })
       .catch(function (failure) {

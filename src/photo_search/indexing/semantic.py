@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import stat
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -40,9 +41,11 @@ from photo_search.artifacts.store import generation_id_for
 from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import (
     INDEX_REPAIR_REQUIRED,
+    INPUT_UNSTABLE,
     PROCESSOR_MISMATCH,
     RUNTIME_CAPABILITY_UNAVAILABLE,
     RUNTIME_RESOLUTION_MISMATCH,
+    SOURCE_FILE_MISSING,
     SPACE_MISMATCH,
     CatalogError,
 )
@@ -72,13 +75,30 @@ PROFILE_QUERY_PARSER_VERSION = "match-expression-v1"
 DEFAULT_BUILD_LIMIT = 5000
 #: Candidate rows are read in bounded SQL pages, including one row of lookahead.
 SELECTION_PAGE_SIZE = 256
+DISPATCH_PAGE_SIZE = 100
 
 #: The location a build reads from. Only a ``PRESENT`` location is usable: encoding a
 #: ``MISSING`` one would publish a vector for a file the catalog no longer has.
 _PRESENT_SOURCE_SQL = (
-    "SELECT l.location_id, l.source_id, l.relative_path, s.root_path "
+    "SELECT l.location_id, l.relative_path, s.root_path, l.size, l.mtime_ns "
     "FROM file_locations AS l JOIN source_roots AS s ON s.source_id = l.source_id "
-    "WHERE l.asset_id = ? AND l.availability = 'PRESENT' ORDER BY l.location_id LIMIT 1"
+    "JOIN assets AS a ON a.asset_id = l.asset_id "
+    "WHERE l.asset_id = ? AND a.sha256 = ? AND l.availability = 'PRESENT' {source_predicate}"
+    "ORDER BY l.location_id"
+)
+
+_CURRENT_VECTOR = (
+    "SELECT 1 FROM index_entries AS e JOIN artifacts AS ar ON ar.artifact_id = e.artifact_id "
+    "WHERE e.asset_id = a.asset_id AND e.space_id = ? AND e.generation_id = ? "
+    "AND e.state = 'CONFIRMED' AND ar.input_revision = a.sha256"
+)
+
+_RECOVERABLE_FAILURE = (
+    "(j.state = 'FAILED' AND (j.last_error_code IN ('SOURCE_FILE_MISSING', 'INPUT_UNSTABLE') OR "
+    "(j.last_error_code = 'RUNTIME_CAPABILITY_UNAVAILABLE' AND j.attempts < j.max_attempts "
+    "AND CASE WHEN json_valid(j.last_error_message) "
+    "THEN json_extract(j.last_error_message, '$.message') ELSE j.last_error_message END "
+    "= 'semantic model adapter was replaced')))"
 )
 
 #: Start from the ordered PRESENT locations, not an unbounded materialisation of assets.
@@ -91,19 +111,20 @@ _PRESENT_SOURCE_SQL = (
 #: changed) is deliberately not a hit: that asset needs a new job.
 _TARGET_SQL = (
     "SELECT a.asset_id AS asset_id, a.sha256 AS sha256, "
-    "f.relative_path AS relative_path, r.root_path AS root_path "
+    "f.relative_path AS relative_path, r.root_path AS root_path, "
+    "j.state AS job_state, j.last_error_code AS job_error "
     "FROM file_locations AS f INDEXED BY {location_index} "
     "JOIN assets AS a ON a.asset_id = f.asset_id "
     "JOIN source_roots AS r ON r.source_id = f.source_id "
+    "LEFT JOIN jobs AS j ON j.subject_type = 'asset' AND j.subject_id = CAST(a.asset_id AS TEXT) "
+    "AND j.input_revision = a.sha256 AND j.task_type = 'image_embedding' AND j.processor_id = ? "
     "WHERE f.availability = 'PRESENT' AND f.asset_id IS NOT NULL AND f.asset_id > ? "
     "{source_predicate}AND f.location_id = ("
     "SELECT l.location_id FROM file_locations AS l WHERE l.asset_id = f.asset_id "
     "AND l.availability = 'PRESENT' {location_source_predicate}"
     "ORDER BY l.location_id LIMIT 1) "
-    "AND NOT EXISTS ("
-    "SELECT 1 FROM index_entries AS e JOIN artifacts AS ar ON ar.artifact_id = e.artifact_id "
-    "WHERE e.asset_id = a.asset_id AND e.space_id = ? AND e.generation_id = ? "
-    "AND e.state = 'CONFIRMED' AND ar.input_revision = a.sha256) "
+    f"AND NOT EXISTS ({_CURRENT_VECTOR}) "
+    "{job_predicate}"
     "ORDER BY f.asset_id LIMIT ?"
 )
 
@@ -163,6 +184,25 @@ def image_eligibility(path: str | Path) -> tuple[bool, str]:
         return str(sniffed) in media_decode.supported_input_formats(), str(sniffed)
 
 
+def _present_locations(
+    catalog: Catalog, asset_id: int, revision: str, source_id: int | None
+) -> list[sqlite3.Row]:
+    source_predicate = "AND l.source_id = ? " if source_id is not None else ""
+    parameters = (asset_id, revision) if source_id is None else (asset_id, revision, source_id)
+    return catalog.read_all(_PRESENT_SOURCE_SQL.format(source_predicate=source_predicate), parameters)
+
+
+def _location_matches_catalog(location: sqlite3.Row) -> bool:
+    path = Path(str(location["root_path"])) / str(location["relative_path"])
+    try:
+        actual = path.stat()
+    except OSError:
+        return False
+    return stat.S_ISREG(actual.st_mode) and (
+        actual.st_size, actual.st_mtime_ns
+    ) == (location["size"], location["mtime_ns"])
+
+
 def semantic_selection(
     catalog: Catalog,
     *,
@@ -171,6 +211,8 @@ def semantic_selection(
     source_id: int | None = None,
     after_asset_id: int | None = None,
     limit: int | None = None,
+    retry_failed: bool | None = None,
+    scan_limit: int | None = None,
 ) -> dict[str, Any]:
     """Split the pending assets into embeddable targets and out-of-scope files.
 
@@ -179,6 +221,9 @@ def semantic_selection(
     says explicitly. ``after_asset_id`` starts the walk after one already-processed asset, so
     a caller that has to cover a 20-30 万 first build can page through the whole scope with
     bounded memory instead of asking for every pending row at once (P4-02Y-I §2).
+    Classification and explicit retries inspect all uncovered current inputs. Ordinary
+    builds skip settled failures except for restored files and legacy adapter replacement.
+    ``scan_limit`` bounds file probes even when a page contains few usable targets.
     """
     scoped = source_id is not None
     sql = _TARGET_SQL.format(
@@ -188,11 +233,17 @@ def semantic_selection(
         ),
         source_predicate="AND f.source_id = ? " if scoped else "",
         location_source_predicate="AND l.source_id = f.source_id " if scoped else "",
+        job_predicate=(
+            "AND (j.state IS NULL OR j.state IN ('QUEUED', 'RUNNING', 'RETRY_WAIT', 'SUCCEEDED') "
+            f"OR {_RECOVERABLE_FAILURE}) "
+            if retry_failed is False else ""
+        ),
     )
     source_parameters = (int(source_id),) if scoped else ()
     cursor = int(after_asset_id) if after_asset_id is not None else 0
     generation_id = generation_id_for(str(space_id), str(processor_id))
     wanted = None if limit is None else max(0, int(limit))
+    scan_budget = None if scan_limit is None else max(1, int(scan_limit))
     targets: list[dict[str, Any]] = []
     labels: dict[str, int] = {}
     sample: list[dict[str, Any]] = []
@@ -205,9 +256,11 @@ def semantic_selection(
         page_size = SELECTION_PAGE_SIZE
         if wanted is not None:
             page_size = min(page_size, max(1, wanted - len(targets)))
+        if scan_budget is not None:
+            page_size = min(page_size, scan_budget - checked)
         rows = catalog.read_all(
             sql,
-            (cursor, *source_parameters, str(space_id), generation_id, page_size + 1),
+            (str(processor_id), cursor, *source_parameters, str(space_id), generation_id, page_size + 1),
         )
         page = rows[:page_size]
         has_more = len(rows) > page_size
@@ -217,6 +270,28 @@ def semantic_selection(
             cursor = int(row["asset_id"])
             path = Path(str(row["root_path"])) / str(row["relative_path"])
             eligible, label = image_eligibility(path)
+            if label == "UNREADABLE" and row["job_state"] in REWINDABLE_STATES:
+                # A restored duplicate may be usable even while the first registered
+                # path is gone. An already-refused asset with no readable copy stays put.
+                for location in _present_locations(catalog, cursor, str(row["sha256"]), source_id):
+                    alternate = Path(str(location["root_path"])) / str(location["relative_path"])
+                    if alternate == path:
+                        continue
+                    eligible, label = image_eligibility(alternate)
+                    if eligible:
+                        break
+            if label == "UNREADABLE" and row["job_state"] not in REWINDABLE_STATES:
+                # A catalog PRESENT input that vanished before classification must surface
+                # the same file error as an input that vanished between selection and encode.
+                eligible = True
+            if row["job_state"] == "FAILED" and row["job_error"] == INPUT_UNSTABLE:
+                # A scan may rebind the same SHA. Require a current disk/scan match before
+                # reopening its existing failure, so unchanged failures stay settled.
+                if not any(
+                    _location_matches_catalog(location)
+                    for location in _present_locations(catalog, cursor, str(row["sha256"]), source_id)
+                ):
+                    eligible, label = False, INPUT_UNSTABLE
             if eligible:
                 if wanted is None or len(targets) < wanted:
                     targets.append(
@@ -230,12 +305,13 @@ def semantic_selection(
             labels[label] = labels.get(label, 0) + 1
             if len(sample) < 20:
                 sample.append({"asset_id": cursor, "label": label})
-        if reached_limit or not has_more:
+        if reached_limit or not has_more or checked == scan_budget:
             complete = not has_more and (not page or cursor == int(page[-1]["asset_id"]))
             break
     return {
         "checked": checked,
         "coverage_complete": complete,
+        "after_asset_id": cursor,
         "targets": targets,
         "out_of_scope": {
             "count": out_of_scope,
@@ -290,46 +366,60 @@ def enqueue_targets(
     catalog: Catalog,
     targets: Sequence[Mapping[str, Any]],
     *,
+    space_id: str,
     processor_id: str,
     now_ms: int,
     device: str = "auto",
     retry_failed: bool = False,
-) -> dict[str, int]:
+    source_id: int | None = None,
+) -> tuple[dict[str, int], list[int]]:
     """Queue one embedding job per target, idempotently (the logical key is the identity).
 
-    ``retry_failed`` reuses the same logical job instead of creating a second row: a finished
-    job is rewound to QUEUED with a fresh attempt budget, exactly like the face processor's
-    forced re-detection. A live (RUNNING) job is never touched.
+    Recovery reuses the same logical job. A live job and a current confirmed vector are
+    left alone. The returned ids are the only jobs this batch may claim.
     """
     requested = job_device(device)
-    queued = rewound = live = 0
+    queued = rewound = 0
+    job_ids: list[int] = []
+    generation_id = generation_id_for(str(space_id), str(processor_id))
+    source_predicate = "AND l.source_id = ?" if source_id is not None else ""
+    source_parameters = (int(source_id),) if source_id is not None else ()
     with catalog.write() as connection:
         for target in targets:
             asset_id = int(target["asset_id"])
             revision = str(target["input_revision"])
-            if retry_failed and _rewind(
+            if connection.execute(
+                "SELECT 1 FROM assets AS a WHERE a.asset_id = ? AND a.sha256 = ? "
+                "AND EXISTS (SELECT 1 FROM file_locations AS l WHERE l.asset_id = a.asset_id "
+                f"AND l.availability = 'PRESENT' {source_predicate}) "
+                f"AND NOT EXISTS ({_CURRENT_VECTOR})",
+                (asset_id, revision, *source_parameters, str(space_id), generation_id),
+            ).fetchone() is None:
+                continue
+            if _rewind(
                 connection,
                 asset_id=asset_id,
                 revision=revision,
                 processor_id=str(processor_id),
                 now_ms=int(now_ms),
+                retry_failed=retry_failed,
             ):
                 rewound += 1
-                continue
-            _enqueue_one(
-                connection,
-                asset_id=asset_id,
+            else:
+                queued += 1
+            job_ids.append(jobs.enqueue(
+                connection, subject_type="asset", subject_id=str(asset_id),
                 input_revision=revision,
+                task_type=SEMANTIC_TASK_TYPE,
                 processor_id=str(processor_id),
                 now_ms=int(now_ms),
-                device=requested,
-            )
-            queued += 1
-    return {"targets": len(targets), "queued": queued, "rewound": rewound, "live": live}
+                requested_device=requested,
+            ))
+    return {"targets": len(targets), "queued": queued, "rewound": rewound, "live": 0}, job_ids
 
 
 #: States a retry may rewind: everything except a live execution.
-REWINDABLE_STATES = ("SUCCEEDED", "FAILED", "CANCELLED", "BLOCKED", "RETRY_WAIT")
+REWINDABLE_STATES = ("FAILED", "CANCELLED", "BLOCKED")
 
 
 def _rewind(
@@ -339,18 +429,20 @@ def _rewind(
     revision: str,
     processor_id: str,
     now_ms: int,
+    retry_failed: bool,
 ) -> bool:
     """Reuse the same logical job for a retry (never a second row)."""
     placeholders = ", ".join("?" for _ in REWINDABLE_STATES)
+    predicate = f"j.state IN ({placeholders})" if retry_failed else _RECOVERABLE_FAILURE
     cursor = connection.execute(
-        "UPDATE jobs SET state = ?, attempts = 0, progress = 0.0, lease_token = NULL, "
+        "UPDATE jobs AS j SET state = ?, attempts = 0, progress = 0.0, lease_token = NULL, "
         "lease_expires_at = NULL, worker_id = NULL, run_after = ?, last_error_code = NULL, "
         "last_error_message = NULL, blocking_reason = NULL, resolved_device = NULL, "
         "runtime_provider = NULL, precision = NULL, runtime_capability_revision = NULL, "
         "dispatch_spec_revision = NULL, updated_at = ? "
         "WHERE subject_type = 'asset' AND subject_id = ? AND input_revision = ? "
         "AND task_type = ? AND processor_id = ? "
-        f"AND state IN ({placeholders})",
+        f"AND {predicate}",
         (
             jobs.STATE_QUEUED,
             int(now_ms),
@@ -359,31 +451,10 @@ def _rewind(
             str(revision),
             SEMANTIC_TASK_TYPE,
             str(processor_id),
-            *REWINDABLE_STATES,
+            *(REWINDABLE_STATES if retry_failed else ()),
         ),
     )
     return bool(cursor.rowcount)
-
-
-def _enqueue_one(
-    connection: sqlite3.Connection,
-    *,
-    asset_id: int,
-    input_revision: str,
-    processor_id: str,
-    now_ms: int,
-    device: str,
-) -> None:
-    jobs.enqueue(
-        connection,
-        subject_type="asset",
-        subject_id=str(int(asset_id)),
-        input_revision=str(input_revision),
-        task_type=SEMANTIC_TASK_TYPE,
-        processor_id=str(processor_id),
-        now_ms=int(now_ms),
-        requested_device=str(device),
-    )
 
 
 def adapter_runtime_facts(adapter: Any) -> dict[str, Any]:
@@ -531,10 +602,10 @@ def semantic_executor(
     space_id: str,
     dimension: int,
     processor_id: str,
+    source_id: int | None = None,
     wall_clock: Callable[[], int] | None = None,
 ) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """The scheduler executor for ``image_embedding`` jobs over one catalog."""
-
     def run(request: Mapping[str, Any]) -> dict[str, Any]:
         moment = int((wall_clock or catalog.now_ms)())
         result: dict[str, Any] = {
@@ -555,19 +626,24 @@ def semantic_executor(
         }
         asset_id = int(request["subject_id"])
         try:
-            source = catalog.read_one(_PRESENT_SOURCE_SQL, (asset_id,))
-            if source is None:
+            locations = _present_locations(catalog, asset_id, str(request["input_revision"]), source_id)
+            changed = False
+            for source in locations:
+                path = Path(str(source["root_path"])) / str(source["relative_path"])
+                try:
+                    before = path.stat()
+                except (FileNotFoundError, NotADirectoryError):
+                    continue
+                if not stat.S_ISREG(before.st_mode):
+                    continue
+                if (before.st_size, before.st_mtime_ns) == (source["size"], source["mtime_ns"]):
+                    break
+                changed = True
+            else:
                 raise CatalogError(
-                    "SOURCE_FILE_MISSING",
-                    "the asset has no readable location to embed",
-                    details={"asset_id": asset_id},
-                )
-            path = Path(str(source["root_path"])) / str(source["relative_path"])
-            if not path.is_file():
-                raise CatalogError(
-                    "SOURCE_FILE_MISSING",
-                    "the source file of this asset is gone",
-                    details={"asset_id": asset_id},
+                    INPUT_UNSTABLE if changed else SOURCE_FILE_MISSING,
+                    "the source file changed; rescan before encoding" if changed
+                    else "the asset has no available location for this revision",
                 )
             vector = _validated_image_vector(
                 encoder,
@@ -575,6 +651,18 @@ def semantic_executor(
                 dimension=int(dimension),
                 temp_root=catalog.data_root,
             )
+            after = path.stat()
+            if (before.st_size, before.st_mtime_ns) != (after.st_size, after.st_mtime_ns):
+                raise CatalogError(INPUT_UNSTABLE, "the source file changed during encoding")
+            if catalog.read_one(
+                "SELECT 1 FROM file_locations AS l JOIN assets AS a ON a.asset_id = l.asset_id "
+                "WHERE l.location_id = ? AND l.asset_id = ? AND a.sha256 = ? "
+                "AND l.availability = 'PRESENT' AND l.relative_path = ? "
+                "AND l.size = ? AND l.mtime_ns = ?",
+                (source["location_id"], asset_id, str(request["input_revision"]),
+                 source["relative_path"], before.st_size, before.st_mtime_ns),
+            ) is None:
+                raise CatalogError(INPUT_UNSTABLE, "the source location changed during encoding")
             result["artifacts"] = [
                 embedding_artifact(
                     artifact_id_for(str(processor_id), str(request["input_revision"])),
@@ -584,12 +672,24 @@ def semantic_executor(
                 )
             ]
         except CatalogError as error:
+            retryable = error.details.get("retryable") is True
             result.update(
-                state="FAILED",
+                state="RETRY_WAIT" if retryable else "FAILED",
                 progress=0.0,
                 error={
                     "code": str(error.code),
                     "message": str(error.message),
+                    "retryable": retryable,
+                    "blocking_reason": None,
+                },
+            )
+        except FileNotFoundError:
+            result.update(
+                state="FAILED",
+                progress=0.0,
+                error={
+                    "code": SOURCE_FILE_MISSING,
+                    "message": "the source file disappeared during encoding",
                     "retryable": False,
                     "blocking_reason": None,
                 },
@@ -601,7 +701,7 @@ def semantic_executor(
                 error={
                     "code": str(RUNTIME_RESOLUTION_MISMATCH),
                     "message": f"the image encoder failed: {type(error).__name__}",
-                    "retryable": True,
+                    "retryable": False,
                     "blocking_reason": None,
                 },
             )
@@ -685,6 +785,8 @@ def build_index(
     device_policy: str = "cpu_allowed",
     worker_id: str = "semantic-build",
     retry_failed: bool = False,
+    after_asset_id: int | None = None,
+    scan_limit: int | None = None,
     yield_to_foreground: Callable[[], bool] | None = None,
 ) -> dict[str, Any]:
     """Build (or extend) the semantic index of one catalog with the pinned model.
@@ -735,31 +837,52 @@ def build_index(
         processor_id=str(spec.processor_id),
         source_id=source_id,
         limit=limit,
+        retry_failed=retry_failed,
+        after_asset_id=after_asset_id,
+        scan_limit=scan_limit,
     )
     targets = list(selection["targets"])
-    enqueued = enqueue_targets(
+    enqueued, job_ids = enqueue_targets(
         catalog,
         targets,
+        space_id=space_id,
         processor_id=str(spec.processor_id),
         now_ms=catalog.now_ms(),
         device=str(device),
         retry_failed=bool(retry_failed),
+        source_id=source_id,
     )
-    executor = semantic_executor(
+    encode = semantic_executor(
         catalog,
         encoder=encoder,
         space_id=space_id,
         dimension=dimension,
         processor_id=str(spec.processor_id),
+        source_id=source_id,
     )
+    retry_wait = False
+
+    def executor(request: dict[str, Any]) -> dict[str, Any]:
+        nonlocal retry_wait
+        result = encode(request)
+        retry_wait = result["state"] == "RETRY_WAIT"
+        return result
+
     steps = 0
-    while not (yield_to_foreground is not None and yield_to_foreground()):
-        if not scheduler.run_once(
-            executor, worker_id=str(worker_id), now_ms=catalog.now_ms()
-        ):
-            break
-        steps += 1
-        if len(targets) and steps >= len(targets):
+    yielded = False
+    for start in range(0, len(job_ids), DISPATCH_PAGE_SIZE):
+        group = job_ids[start : start + DISPATCH_PAGE_SIZE]
+        scheduler.job_ids = tuple(group)
+        for _ in group:
+            if yield_to_foreground is not None and yield_to_foreground():
+                yielded = True
+                break
+            if not scheduler.run_once(executor, worker_id=str(worker_id), now_ms=catalog.now_ms()):
+                break
+            steps += 1
+            if retry_wait:
+                break
+        if retry_wait or yielded:
             break
     drained = drain_semantic_outbox(
         catalog,
@@ -778,6 +901,7 @@ def build_index(
         "evidence": evidence,
         "checked": int(selection["checked"]),
         "coverage_complete": bool(selection["coverage_complete"]),
+        "after_asset_id": int(selection["after_asset_id"]),
         "targets": len(targets),
         "out_of_scope": dict(selection["out_of_scope"]),
         "enqueue": enqueued,
@@ -938,6 +1062,42 @@ def job_counts(catalog: Catalog, *, processor_id: str) -> dict[str, int]:
             "ORDER BY state",
             (str(processor_id),),
         )
+    }
+
+
+def candidate_job_progress(
+    connection: sqlite3.Connection, *, space_id: str, processor_id: str
+) -> dict[str, Any]:
+    """Classify candidate jobs against the current coverage scope in one read."""
+    rows = connection.execute(
+        "SELECT j.state, j.last_error_code, COUNT(*) AS count, "
+        "(a.asset_id IS NOT NULL AND EXISTS (SELECT 1 FROM file_locations AS l "
+        "WHERE l.asset_id = a.asset_id AND l.availability = 'PRESENT') "
+        f"AND NOT EXISTS ({_CURRENT_VECTOR})) AS current "
+        "FROM jobs AS j LEFT JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
+        "AND a.sha256 = j.input_revision "
+        "WHERE j.subject_type = 'asset' AND j.task_type = ? AND j.processor_id = ? "
+        "GROUP BY j.state, j.last_error_code, current",
+        (str(space_id), generation_id_for(str(space_id), str(processor_id)),
+         SEMANTIC_TASK_TYPE, str(processor_id)),
+    )
+    failed = pending = historical = 0
+    errors: dict[str, int] = {}
+    for row in rows:
+        count = int(row["count"])
+        refused = row["state"] in ("FAILED", "BLOCKED", "CANCELLED")
+        if row["current"]:
+            if refused:
+                failed += count
+            else:
+                pending += count
+            if row["last_error_code"]:
+                code = str(row["last_error_code"])
+                errors[code] = errors.get(code, 0) + count
+        elif refused:
+            historical += count
+    return {
+        "failed": failed, "pending": pending, "historical_failed": historical, "errors": errors,
     }
 
 

@@ -16,6 +16,13 @@ def test_pure_filter_keyset_pages_past_5000_without_semantic_session(tmp_path: A
                 "INSERT INTO assets (sha256,byte_size,created_at,state) VALUES (?,0,1,'ACTIVE')",
                 [(hashlib.sha256(f"nl-ux-{index}".encode()).hexdigest(),) for index in range(5002)],
             )
+            connection.execute(
+                "INSERT INTO file_locations(source_id,relative_path,path_key,asset_id,size,mtime_ns,availability) "
+                "SELECT ?, 'synthetic-' || asset_id || '.jpg', 'synthetic-' || asset_id || '.jpg', "
+                "asset_id, 0, 0, 'PRESENT' FROM assets AS a WHERE NOT EXISTS "
+                "(SELECT 1 FROM file_locations AS l WHERE l.asset_id=a.asset_id)",
+                (env.library.source_id,),
+            )
 
         def forbidden_encoder() -> Any:
             raise AssertionError("pure filter search must not request a query encoder")

@@ -1,4 +1,8 @@
-## Current task: P4-BUILD-STABILITY-A2（2026-11-12）
+## Current task: P4-SEMANTIC-FAILED-JOBS-RECOVERY（2026-11-19）
+
+**IMPLEMENTED / SOL REVIEW PASS / ACCEPTANCE PENDING**。候选按当前版本、PRESENT 位置和向量确认情况区分有效失败与历史失效。独立 Sol 发现的待确认向量续接、退避及上限、复扫恢复、并发范围判定问题已修复，修复后 **9 项定向测试全通过**，复审无阻塞项。浏览器连接超时，页面验收待完成。详见[任务卡](tasks/P4-SEMANTIC-FAILED-JOBS-RECOVERY.md)和[报告及升级恢复步骤](reports/P4-SEMANTIC-FAILED-JOBS-RECOVERY.md)。未访问用户图库。
+
+## Previous task: P4-BUILD-STABILITY-A2（2026-11-12）
 
 **CODE_VALIDATED / HARDWARE_PENDING**：最终代码完成 D 阶段 Worker 清理、跨重启时钟安全与 B/C/D/E 回归，独立 DS-H 高推理只读终审 **REVIEW PASS**，无 P0/P1/P2。八类后台 Worker 在关闭成功后才清引用，线程自有 SQLite/catalog 在创建线程内重试；单 Worker 失败不阻断其他安全关闭，线程/Future/cleanup failure 存在时保留数据目录租约。`Catalog.close()` 首次失败可重试且不重复释放已成功资源。时钟按数据根维护不透明应用 owner 与进程高水位，覆盖“前跳→重启且仍在未来→回拨→下一次写事务恢复”；只回收先前应用 owner 的未来 RUNNING lease，不改当前进程、无前缀 CLI lease 或批量任务状态。升级前无 `app:` 前缀的旧 lease 不自动回收，作为避免误伤 CLI 的一次性兼容边界。最新证据：Worker 10/10、时钟 4/4、D 受影响 196/196、scope 缓存 118/118、OCR 串扰修复 96/96、B/C/D 扩展 336 passed/33 skipped/0 failed。最终完整 `final-full-r5.xml` **3853 项：3777 passed / 24 failed / 52 skipped / 0 errors，退出码 1**；24 个失败全部属于历史 26 项集合，新增失败 0、新增 skip 0，两项历史失败消失。Ruff、compileall、Node 语法和 diff-check 通过。本机仅 RTX 4060 Laptop 8188 MiB + NVMe SSD，不是 GTX 1660 6GB + 机械硬盘，且无目标真实模型权重，因此真实 Qwen/Face/OCR、显存切换、HDD 长时恢复全部 PENDING，A2 不得标 `FINAL_ACCEPTED`。详见[任务卡](tasks/P4-BUILD-STABILITY-A2.md)和[最终报告](reports/P4-BUILD-STABILITY-A2.md#2026-11-14-a2-最终收尾worker-清理跨重启时钟与-e-回归)。未提交、未推送。
 

@@ -13,13 +13,14 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from p2_search_fixtures import build_library, write_jpeg
+from p2_search_fixtures import build_library, stamp, write_jpeg
 
 from photo_search.artifacts.store import generation_id_for
 from photo_search.catalog.errors import INDEX_REPAIR_REQUIRED, CatalogError
 from photo_search.config import vectors_dir
 from photo_search.indexing import semantic
 from photo_search.indexing.store import LanceVectorIndex, _table_name
+from photo_search.runtime.model_resource_gate import GatedEncoder, ModelResourceGate
 from photo_search.scheduler.contracts import canonical_json
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -168,19 +169,40 @@ def test_first_build_refuses_an_orphan_lance_table_before_catalog_writes(tmp_pat
         library.close()
 
 
-def test_a_vanished_file_is_out_of_scope_and_the_rest_still_builds(tmp_path: Path) -> None:
+def test_a_vanished_present_file_is_reported_and_the_rest_still_builds(tmp_path: Path) -> None:
     library = build_library(tmp_path, PHOTOS)
     adapter = StubPinnedAdapter()
     try:
-        (Path(library.root) / PHOTOS[0]).unlink()
+        missing_path = Path(library.root) / PHOTOS[0]
+        original = missing_path.read_bytes()
+        missing_path.unlink()
         report = semantic.build_index(
             library.catalog, encoder=adapter, manifest_path=MANIFEST, limit=10, device="auto"
         )
-        assert report["targets"] == len(PHOTOS) - 1
-        assert report["out_of_scope"]["count"] == 1
-        assert report["out_of_scope"]["labels"] == {"UNREADABLE": 1}
-        assert report["run"]["jobs"] == {"SUCCEEDED": len(PHOTOS) - 1}
+        assert report["targets"] == len(PHOTOS)
+        assert report["out_of_scope"]["count"] == 0
+        assert report["run"]["jobs"] == {"SUCCEEDED": len(PHOTOS) - 1, "FAILED": 1}
+        failure = library.catalog.read_one(
+            "SELECT job_id, last_error_code FROM jobs WHERE state='FAILED'"
+        )
+        assert failure["last_error_code"] == "SOURCE_FILE_MISSING"
         assert report["generation"]["entries"] == {"CONFIRMED": len(PHOTOS) - 1}
+        absent = semantic.build_index(library.catalog, encoder=adapter, manifest_path=MANIFEST)
+        assert absent["targets"] == absent["run"]["steps"] == 0
+
+        library.service.delete_source(library.source_id)
+        missing_path.write_bytes(original)
+        stamp(missing_path)
+        source = library.service.register_source(display_name="restored", root_path=library.root)
+        library.service.run_scan(int(source["source_id"]))
+        adapter.paths.clear()
+        recovered = semantic.build_index(library.catalog, encoder=adapter, manifest_path=MANIFEST)
+        assert recovered["targets"] == recovered["enqueue"]["rewound"] == 1
+        assert adapter.paths == [str(missing_path)]
+        assert recovered["generation"]["entries"] == {"CONFIRMED": len(PHOTOS)}
+        assert library.catalog.read_one(
+            "SELECT state FROM jobs WHERE job_id=?", (failure["job_id"],)
+        )["state"] == "SUCCEEDED"
     finally:
         library.close()
 
@@ -224,7 +246,9 @@ def test_the_executor_reports_a_file_that_vanishes_after_selection(tmp_path: Pat
             "job_id": 1,
             "lease_token": "lease",
             "subject_id": str(library.assets[PHOTOS[0]]),
-            "input_revision": "a" * 64,
+            "input_revision": library.catalog.read_one(
+                "SELECT sha256 FROM assets WHERE asset_id = ?", (library.assets[PHOTOS[0]],)
+            )["sha256"],
             "task_type": semantic.SEMANTIC_TASK_TYPE,
             "processor_id": str(spec.processor_id),
             "resolved_device": "gpu",
@@ -299,9 +323,18 @@ def test_a_source_scoped_build_selects_only_that_source(tmp_path: Path) -> None:
     finally:
         library.close()
 
-def test_retry_failed_rewinds_the_same_logical_job(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("failure", "retry_failed"),
+    [
+        (RuntimeError("boom"), True),
+        (CatalogError("RUNTIME_CAPABILITY_UNAVAILABLE", "semantic model adapter was replaced"), False),
+    ],
+)
+def test_recovery_rewinds_the_same_logical_job(
+    tmp_path: Path, failure: Exception, retry_failed: bool
+) -> None:
     library = build_library(tmp_path, PHOTOS)
-    adapter = StubPinnedAdapter(failure=RuntimeError("boom"))
+    adapter = StubPinnedAdapter(failure=failure)
     try:
         report = semantic.build_index(
             library.catalog, encoder=adapter, manifest_path=MANIFEST, limit=10, device="auto"
@@ -313,7 +346,7 @@ def test_retry_failed_rewinds_the_same_logical_job(tmp_path: Path) -> None:
             manifest_path=MANIFEST,
             limit=10,
             device="auto",
-            retry_failed=True,
+            retry_failed=retry_failed,
         )
         assert again["enqueue"]["rewound"] == len(PHOTOS)
         assert again["run"]["jobs"] == {"SUCCEEDED": len(PHOTOS)}
@@ -327,6 +360,157 @@ def test_retry_failed_rewinds_the_same_logical_job(tmp_path: Path) -> None:
             retry_failed=True,
         )
         assert third["targets"] == 0 and third["enqueue"]["rewound"] == 0
+    finally:
+        library.close()
+
+
+def test_replaced_adapter_defers_job_until_fresh_adapter_runs(tmp_path: Path) -> None:
+    library = build_library(tmp_path, PHOTOS[:2])
+    stale = StubPinnedAdapter()
+    gate = ModelResourceGate()
+    current = True
+    adapter = GatedEncoder(stale, gate, lambda: current)
+
+    def replace_after_health() -> dict[str, Any]:
+        nonlocal current
+        facts = stale.health()
+        current = False
+        return facts
+
+    adapter.health = replace_after_health  # type: ignore[method-assign]
+    try:
+        first = semantic.build_index(library.catalog, encoder=adapter, manifest_path=MANIFEST)
+        assert first["run"] == {"steps": 1, "jobs": {"RETRY_WAIT": 1, "QUEUED": 1}}
+        old = library.catalog.read_one(
+            "SELECT job_id, attempts, last_error_code FROM jobs WHERE state='RETRY_WAIT'"
+        )
+        assert old["attempts"] == 1 and old["last_error_code"] == "RUNTIME_CAPABILITY_UNAVAILABLE"
+        assert stale.paths == []
+
+        fresh = GatedEncoder(StubPinnedAdapter(), gate)
+        waiting = semantic.build_index(
+            library.catalog, encoder=fresh, manifest_path=MANIFEST, retry_failed=True,
+        )
+        assert waiting["run"] == {"steps": 1, "jobs": {"RETRY_WAIT": 1, "SUCCEEDED": 1}}
+        assert waiting["enqueue"]["rewound"] == 0
+        library.clock.advance(60_000)
+        resumed = semantic.build_index(library.catalog, encoder=fresh, manifest_path=MANIFEST)
+        assert resumed["run"]["jobs"] == {"SUCCEEDED": 2}
+        assert resumed["generation"]["entries"] == {"CONFIRMED": 2}
+        assert library.catalog.read_one(
+            "SELECT state FROM jobs WHERE job_id=?", (old["job_id"],)
+        )["state"] == "SUCCEEDED"
+    finally:
+        library.close()
+
+
+def test_adapter_retry_budget_is_not_reset_by_ordinary_build(tmp_path: Path) -> None:
+    library = build_library(tmp_path, PHOTOS[:1])
+    stale = StubPinnedAdapter()
+    adapter = GatedEncoder(stale, ModelResourceGate(), lambda: False)
+    adapter.health = stale.health  # type: ignore[method-assign]
+    try:
+        for expected in ({"RETRY_WAIT": 1}, {"RETRY_WAIT": 1}, {"FAILED": 1}):
+            result = semantic.build_index(library.catalog, encoder=adapter, manifest_path=MANIFEST)
+            assert result["run"] == {"steps": 1, "jobs": expected}
+            library.clock.advance(60_000)
+        result = semantic.build_index(library.catalog, encoder=stale, manifest_path=MANIFEST)
+        assert result["run"] == {"steps": 0, "jobs": {"FAILED": 1}}
+        assert stale.paths == []
+    finally:
+        library.close()
+
+
+def test_unstable_input_waits_for_rescan_of_same_content(tmp_path: Path) -> None:
+    library = build_library(tmp_path, PHOTOS[:1])
+    path = library.root / PHOTOS[0]
+    adapter = StubPinnedAdapter()
+    try:
+        stamp(path, age_ms=10_000)
+        first = semantic.build_index(library.catalog, encoder=adapter, manifest_path=MANIFEST)
+        assert first["run"]["jobs"] == {"FAILED": 1}
+        missing = library.catalog.read_one(
+            "SELECT job_id, last_error_code FROM jobs WHERE task_type = 'image_embedding'"
+        )
+        assert missing["last_error_code"] == "INPUT_UNSTABLE"
+        repeated = semantic.build_index(library.catalog, encoder=adapter, manifest_path=MANIFEST)
+        assert repeated["run"]["steps"] == 0 and adapter.paths == []
+
+        library.service.run_scan(library.source_id)
+        recovered = semantic.build_index(library.catalog, encoder=adapter, manifest_path=MANIFEST)
+        assert recovered["run"]["jobs"] == {"SUCCEEDED": 1}
+        assert recovered["generation"]["entries"] == {"CONFIRMED": 1}
+        assert library.catalog.read_one(
+            "SELECT state FROM jobs WHERE job_id=?", (missing["job_id"],)
+        )["state"] == "SUCCEEDED"
+    finally:
+        library.close()
+
+
+def test_only_small_job_id_groups_are_sent_to_scheduler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    library = build_library(tmp_path, PHOTOS)
+    adapter = StubPinnedAdapter()
+    run_once = semantic.scheduler_engine.Scheduler.run_once
+    attempted: list[int] = []
+
+    def observe(scheduler: Any, *args: Any, **kwargs: Any) -> bool:
+        attempted.append(len(scheduler.job_ids))
+        return run_once(scheduler, *args, **kwargs)
+
+    monkeypatch.setattr(semantic, "DISPATCH_PAGE_SIZE", 2)
+    monkeypatch.setattr(semantic.scheduler_engine.Scheduler, "run_once", observe)
+    try:
+        result = semantic.build_index(library.catalog, encoder=adapter, manifest_path=MANIFEST)
+        assert attempted == [2, 2, 1]
+        assert result["generation"]["entries"] == {"CONFIRMED": 3}
+    finally:
+        library.close()
+
+
+def test_source_deleted_between_selection_and_enqueue_never_reaches_encoder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = build_library(tmp_path, PHOTOS)
+    adapter = StubPinnedAdapter()
+    select = semantic.semantic_selection
+
+    def remove_source(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        selected = select(*args, **kwargs)
+        library.service.delete_source(library.source_id)
+        return selected
+
+    monkeypatch.setattr(semantic, "semantic_selection", remove_source)
+    try:
+        report = semantic.build_index(
+            library.catalog, encoder=adapter, manifest_path=MANIFEST, retry_failed=True,
+        )
+        assert report["targets"] == len(PHOTOS)
+        assert report["run"] == {"steps": 0, "jobs": {}}
+        assert report["generation"]["entries"] == {}
+        assert adapter.paths == []
+    finally:
+        library.close()
+
+
+def test_explicit_retry_confirms_pending_artifact_without_encoding_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    library = build_library(tmp_path, (PHOTOS[0],))
+    adapter = StubPinnedAdapter()
+    try:
+        with monkeypatch.context() as fault:
+            fault.setattr(semantic, "drain_semantic_outbox", lambda *_args, **_kwargs: {})
+            interrupted = semantic.build_index(library.catalog, encoder=adapter, manifest_path=MANIFEST)
+            assert interrupted["run"]["jobs"] == {"SUCCEEDED": 1}
+            assert interrupted["generation"]["entries"] == {"PENDING_REPAIR": 1}
+        resumed = semantic.build_index(
+            library.catalog, encoder=adapter, manifest_path=MANIFEST, retry_failed=True,
+        )
+        assert resumed["run"]["steps"] == resumed["enqueue"]["rewound"] == 0
+        assert resumed["generation"]["entries"] == {"CONFIRMED": 1}
+        assert len(adapter.paths) == 1
     finally:
         library.close()
 

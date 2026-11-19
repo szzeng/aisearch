@@ -385,9 +385,9 @@ def refresh_library(
         for name, payload in {**semantic_as_stage(semantic), **enrichment}.items()
         if str(payload.get("state")) == STAGE_FAILED
     ]
-    if int(semantic.get("failed_assets", 0)) > 0:
+    if max(int(semantic.get("failed_assets", 0)), int(semantic.get("backlog_failed", 0))) > 0:
         # Content the encoder was handed and refused is reported as a partial failure: the
-        # rest of the library is searchable, and the next refresh retries that content.
+        # rest of the library is searchable, and the durable failure remains visible.
         failures.append("semantic-content")
     if mode == REFRESH_MODE_BUILD and not search_ready and str(basis) in (
         "semantic-backlog",
@@ -598,11 +598,28 @@ def _semantic_stage(
         space_id=space_id,
         processor_id=str(spec.processor_id),
         limit=SEMANTIC_BATCH_LIMIT,
+        retry_failed=False,
     )
     targets = len(selection["targets"])
     semantic_total = max(required, targets)
     semantic_completed = min(int(report["confirmed"]), semantic_total)
     if targets == 0 and bool(selection["coverage_complete"]):
+        if not semantic.generation_published(
+            catalog, space_id=space_id, processor_id=str(spec.processor_id)
+        ):
+            backlog = _backlog_report(catalog, space_id, str(spec.processor_id), [None])
+            if backlog["backlog_total"]:
+                return {
+                    "state": STAGE_SKIPPED,
+                    "reason": "GENERATION_NOT_PUBLISHED",
+                    "space_id": space_id,
+                    "generation_id": generation_id,
+                    "targets": 0,
+                    "encoded": 0,
+                    "batches": 0,
+                    **report,
+                    **backlog,
+                }
         # Nothing pending in the served generation: either the changed content is already
         # confirmed, or every changed file is one this index is not about (a document, a
         # video, an archive).
@@ -669,6 +686,7 @@ def _semantic_stage(
                 resources.callback(encoder_release)
             batches = 0
             encoded = 0
+            cursor = 0
             confirmed_this_run = 0
             last: dict[str, Any] | None = None
             status.set_activity(
@@ -692,8 +710,10 @@ def _semantic_stage(
                         device=device,
                         device_policy=device_policy,
                         worker_id="library-refresh",
+                        after_asset_id=cursor,
                         yield_to_foreground=foreground_model_waiting,
                     )
+                    cursor = int(payload["after_asset_id"])
                     batches += 1
                     encoded += int(payload["targets"])
                     confirmed_this_run += int(payload["drain"].get("confirmed_delta", 0))
@@ -840,9 +860,8 @@ def _semantic_build_stage(
        the jobs of every image it accepts. This is what makes the source card's denominator
        exact early ("183 500 / 231 420") and what keeps a document or a video out of it;
     2. **encode** - call the existing :func:`photo_search.indexing.semantic.build_index` in
-       its own bounded batches until the served generation has no pending image left. The
-       step stops only when the selection is empty or when a whole batch confirmed nothing
-       (then the remainder is reported, and the next press of the button retries it).
+       its own bounded batches. Advance past refused photos so later assets can still be
+       built, and report any remaining work at the round, cancellation or resource boundary.
 
     ``SEARCH_READY`` is decided afterwards from the same durable backlog, never from the
     in-memory delta, so a 20-30 万 first build cannot be declared searchable after one batch.
@@ -954,9 +973,11 @@ def _semantic_build_stage(
             semantic.enqueue_targets(
                 catalog,
                 targets,
+                space_id=space_id,
                 processor_id=processor_id,
                 now_ms=catalog.now_ms(),
                 device=semantic.job_device(device),
+                source_id=scope,
             )
             classified += len(targets)
             pages += 1
@@ -1082,6 +1103,7 @@ def _semantic_build_stage(
             )
             try:
                 for scope in scopes:
+                    cursor = 0
                     while batches < BUILD_ROUND_CAP:
                         if foreground_model_waiting():
                             break
@@ -1096,8 +1118,10 @@ def _semantic_build_stage(
                             device=device,
                             device_policy=device_policy,
                             worker_id="library-refresh",
+                            after_asset_id=cursor,
                             yield_to_foreground=foreground_model_waiting,
                         )
+                        cursor = int(payload["after_asset_id"])
                         batches += 1
                         encoded += int(payload["targets"])
                         confirmed_this_run += int(payload["drain"].get("confirmed_delta", 0))
@@ -1113,14 +1137,9 @@ def _semantic_build_stage(
                         )
                         confirmed_this_run = 0
                         last = payload
-                        if int(payload["targets"]) == 0:
+                        if bool(payload["coverage_complete"]):
                             break
                         if foreground_model_waiting():
-                            break
-                        if int(payload["drain"]["confirmed_delta"]) == 0:
-                            # The batch handed work to the encoder and got nothing confirmed back
-                            # (every remaining image was refused). Stop, report the remainder and
-                            # leave it to the next run instead of spinning on the same assets.
                             break
                         if cancel_check is not None and cancel_check():
                             break
@@ -1322,9 +1341,10 @@ def _content_report(
     permanent gap (P4-02Q's rule, kept here for the delta). The remaining assets are split
     into three honest buckets:
 
-    * ``unconfirmed_content`` - still waiting for its CONFIRMED current-revision embedding;
+    * ``unconfirmed_content`` - still waiting for its CONFIRMED current-revision embedding,
+      including jobs in RETRY_WAIT;
     * ``failed_assets`` - the encoder was already handed it and the job ended without a
-      confirmation (FAILED/RETRY_WAIT/BLOCKED/CANCELLED), so a retry - not this run - decides
+      confirmation (FAILED/BLOCKED/CANCELLED), so a later attempt decides
       whether it ever becomes searchable;
     * ``confirmed`` - present in the served generation for exactly its current revision.
     """
@@ -1359,7 +1379,7 @@ def _content_report(
             "EXISTS (SELECT 1 FROM jobs AS j WHERE j.subject_type = 'asset' "
             "AND j.subject_id = CAST(a.asset_id AS TEXT) AND j.processor_id = ? "
             "AND j.task_type = ? AND j.input_revision = a.sha256 "
-            "AND j.state IN ('FAILED', 'RETRY_WAIT', 'BLOCKED', 'CANCELLED')) AS refused "
+            "AND j.state IN ('FAILED', 'BLOCKED', 'CANCELLED')) AS refused "
             f"FROM assets AS a WHERE a.asset_id IN ({placeholders})",
             (str(space_id), str(spec.processor_id), SEMANTIC_TASK_TYPE, *batch),
         )

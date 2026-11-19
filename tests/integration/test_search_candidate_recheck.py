@@ -152,7 +152,7 @@ def checked(library, scope, expected_names):
     assert library.catalog.connection.total_changes == changes
 
 
-A_MEMBERS = {"ab", "a", "manual", "held", "hidden", "missing", "other_source", "inactive", "no_location", "cross_source"}
+A_MEMBERS = {"ab", "a", "manual", "held", "hidden", "missing", "other_source", "inactive", "cross_source"}
 B_MEMBERS = {"ab", "b", "detail"}
 
 
@@ -166,13 +166,13 @@ B_MEMBERS = {"ab", "b", "detail"}
 def test_recheck_all_any_controls_replacement_and_source(library, people, mode, expected, source, availability):
     expected = set(expected)
     if source == 1:
-        expected -= {"other_source", "no_location", "cross_source"}
+        expected -= {"other_source", "cross_source"}
     elif source == 2:
         expected &= {"other_source", "cross_source"}
     if availability == "present":
-        expected -= {"missing", "no_location"}
+        expected -= {"missing"}
     elif availability == "missing":
-        expected &= {"missing", "no_location"}
+        expected &= {"missing"}
     checked(library, SearchScope.build(
         person_ids=[library.people[name] for name in people], person_match=mode,
         source_id=source, availability=availability,
@@ -259,7 +259,7 @@ def test_collection_recheck_preserves_controls_archives_and_availability(library
     # A stale input_revision and an offline archived asset still cannot leak in.
     checked(library, scope, expected | {"excluded"})
     checked(library, SearchScope.build(collection_id=1, source_id=1),
-            (expected | {"excluded"}) - {"other_source", "no_location", "cross_source"})
+            (expected | {"excluded"}) - {"other_source", "cross_source"})
 
 
 def test_collection_recheck_resolves_merge_chains_cycles_and_current_state(library):

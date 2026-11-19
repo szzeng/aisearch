@@ -9,7 +9,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from pathlib import Path
 from typing import Any
 
@@ -111,12 +111,21 @@ class CandidateBuildManager:
             return state
         path = Path(catalog_db_path(self.root))
         try:
-            connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
-            rows = connection.execute(
-                "SELECT state,COUNT(*) FROM index_entries WHERE generation_id=? GROUP BY state",
-                (str(state.get("generation_id") or ""),),
-            ).fetchall()
-            connection.close()
+            with closing(sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)) as connection:
+                connection.row_factory = sqlite3.Row
+                rows = connection.execute(
+                    "SELECT state,COUNT(*) FROM index_entries WHERE generation_id=? GROUP BY state",
+                    (str(state.get("generation_id") or ""),),
+                ).fetchall()
+                if state["status"] not in {"RUNNING", "PAUSE_REQUESTED"} and (
+                    state.get("space_id") and state.get("processor_id")
+                ):
+                    from photo_search.indexing.semantic import candidate_job_progress
+
+                    state["job_progress"] = candidate_job_progress(
+                        connection,
+                        space_id=str(state["space_id"]), processor_id=str(state["processor_id"]),
+                    )
             counts = {str(row[0]): int(row[1]) for row in rows}
             state["confirmed_entries"] = counts.get("CONFIRMED", 0)
             state["entry_states"] = counts
@@ -197,7 +206,7 @@ class CandidateBuildManager:
             }
             self._save(state)
             try:
-                self._launch(state, retry_failed=False)
+                self._launch(state, retry_failed=True)
             except Exception as error:
                 state.update({"status": "FAILED", "owner_id": None,
                               "last_error": {"code": "WORKER_START_FAILED", "message": str(error)[:400]}})
@@ -207,7 +216,7 @@ class CandidateBuildManager:
 
     def pause(self, task_id: str) -> dict[str, Any]:
         with self._lock:
-            state = self.status()
+            state = self.status(refresh_counts=False)
             if not state or state.get("task_id") != str(task_id) or state.get("status") != "RUNNING":
                 raise CatalogError("USAGE", "there is no running candidate build to pause")
             self._pause.set()
@@ -218,7 +227,7 @@ class CandidateBuildManager:
         if not self.context.data_root_lease_held:
             raise CatalogError(SELECTION_WRITER_ACTIVE, "candidate indexing requires the running service lease")
         with self._lock:
-            state = self.status()
+            state = self.status(refresh_counts=False)
             if not state or state.get("task_id") != str(task_id):
                 raise CatalogError("USAGE", "the candidate task identity is no longer available")
             if state.get("status") not in {"PAUSED", "INTERRUPTED", "FAILED"}:
@@ -228,13 +237,12 @@ class CandidateBuildManager:
             self._reap_finished_worker(state)
             self._pause.clear()
             self._stop.clear()
-            retry = bool((state.get("last_error") or {}).get("failed_jobs"))
             state["status"] = "RUNNING"
             state["owner_id"] = self._owner_id
             state["last_error"] = None
             self._save(state)
             try:
-                self._launch(state, retry_failed=retry)
+                self._launch(state, retry_failed=True)
             except Exception as error:
                 state.update({"status": "FAILED", "owner_id": None,
                               "last_error": {"code": "WORKER_START_FAILED", "message": str(error)[:400]}})
@@ -335,7 +343,11 @@ class CandidateBuildManager:
                     if str(encoder.spec().envelope["space_id"]) != str(state["space_id"]):
                         raise CatalogError("SPACE_MISMATCH", "the loaded provider no longer matches the candidate task")
                     _record_candidate_runtime(catalog, entry, encoder.health())
-                    first = True
+                    cursor = 0
+                    # The candidate owns this connection. Its own job/outbox writes leave
+                    # data_version alone, while a scan on another connection advances it
+                    # even when an unchanged file merely becomes PRESENT again.
+                    scope_revision = catalog.connection.execute("PRAGMA data_version").fetchone()[0]
                     while True:
                         if self._stop.is_set():
                             state["status"] = "INTERRUPTED"
@@ -352,9 +364,10 @@ class CandidateBuildManager:
                             device="auto",
                             device_policy=str(entry.device_policy),
                             worker_id=f"embedding-candidate-{state['task_id']}",
-                            retry_failed=retry_failed and first,
+                            retry_failed=retry_failed,
+                            after_asset_id=cursor,
+                            scan_limit=BATCH_LIMIT,
                         )
-                        first = False
                         profile = semantic.ensure_search_profile(
                             catalog,
                             semantic.semantic_spec(
@@ -382,16 +395,33 @@ class CandidateBuildManager:
                             state["status"] = "PAUSED"
                             state["owner_id"] = None
                             break
-                        jobs = summary.get("jobs") or payload.get("run", {}).get("jobs") or {}
-                        failed = int(jobs.get("FAILED", 0))
-                        if failed:
+                        if not payload["coverage_complete"]:
+                            cursor = int(payload["after_asset_id"])
+                            continue
+                        with catalog.read_snapshot() as connection:
+                            progress = semantic.candidate_job_progress(
+                                connection, space_id=str(state["space_id"]),
+                                processor_id=str(state["processor_id"]),
+                            )
+                            scope_changed = (
+                                connection.execute("PRAGMA data_version").fetchone()[0] != scope_revision
+                            )
+                        state["job_progress"] = progress
+                        if scope_changed:
+                            state["status"] = "PAUSED"
+                            state["last_error"] = {"code": "LIBRARY_SCOPE_CHANGED"}
+                        elif progress["failed"]:
                             state["status"] = "FAILED"
-                            state["last_error"] = {"code": "FAILED_JOBS", "failed_jobs": failed}
-                            break
-                        if int(payload.get("targets", 0)) == 0 or bool(payload.get("coverage_complete")):
+                            state["last_error"] = {
+                                "code": "FAILED_JOBS", "failed_jobs": progress["failed"],
+                            }
+                        elif progress["pending"]:
+                            state["status"] = "PAUSED"
+                            state["last_error"] = {"code": "SEMANTIC_WORK_PENDING"}
+                        else:
                             state["status"] = "COMPLETED"
                             state["completed_at_ms"] = time.time_ns() // 1_000_000
-                            break
+                        break
                 finally:
                     close_owned_resource(
                         catalog,
@@ -423,6 +453,10 @@ class CandidateBuildManager:
                 "reason": "FACE_TASK_ACTIVE",
                 "message": str(error),
             }
+            state["owner_id"] = None
+        except CatalogError as error:
+            state["status"] = "PAUSED" if error.details.get("retryable") is True else "FAILED"
+            state["last_error"] = {"code": str(error.code), "message": str(error.message)[:500]}
             state["owner_id"] = None
         except Exception as error:  # noqa: BLE001 - persisted status is the operator's recovery record.
             state["status"] = "FAILED"

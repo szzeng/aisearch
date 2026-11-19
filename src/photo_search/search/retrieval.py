@@ -349,7 +349,12 @@ def scope_condition(
                 "WHERE l.source_id = ?)"
             )
         parameters.append(int(scope.source_id))
-    photo_sql, photo_parameters = photo_asset_sql(source_id=scope.source_id, asset_alias=alias)
+    # A removed source leaves valid catalog history but can no longer contribute
+    # a search hit. Registered missing positions retain their availability filters.
+    photo_sql, photo_parameters = photo_asset_sql(
+        source_id=scope.source_id, asset_alias=alias,
+        require_location=True,
+    )
     conditions.append(photo_sql)
     parameters.extend(photo_parameters)
     if scope.availability == "present":
@@ -488,16 +493,12 @@ def authoritative_page(
     """
     where, parameters = scope_condition(catalog.connection, scope)
     if scope == SearchScope():
-        # A full-catalog count must still include zero-location legacy assets and
-        # exclude assets with only non-image locations. Group locations once rather
-        # than probing them twice for every asset in an unrelated covering-index order.
-        # NULL asset ids are unbound locations and must not poison NOT IN.
+        # Group qualifying positions once for the unfiltered count. A registered
+        # duplicate of the same asset must contribute exactly one hit.
         image_sql = image_location_sql("count_location")
         count_sql = (
-            "SELECT COUNT(*) AS value FROM assets AS a WHERE a.asset_id NOT IN "
-            "(SELECT count_location.asset_id FROM file_locations AS count_location "
-            "WHERE count_location.asset_id IS NOT NULL GROUP BY count_location.asset_id "
-            f"HAVING MAX(CASE WHEN {image_sql} THEN 1 ELSE 0 END) = 0)"
+            "SELECT COUNT(DISTINCT count_location.asset_id) AS value "
+            f"FROM file_locations AS count_location WHERE {image_sql}"
         )
     else:
         count_sql = f"SELECT COUNT(*) AS value FROM assets AS a WHERE {where}"

@@ -37,9 +37,11 @@ from photo_search.indexing.store import LanceVectorIndex
 from photo_search.ingestion.service import CatalogService
 from photo_search.models.embedding import cli as embedding_cli
 from photo_search.models.embedding.candidate_task import CandidateBuildManager
+from photo_search.refresh.progress import semantic_breakdown
 from photo_search.runtime.data_root_lease import DataRootLeaseBusy
 from photo_search.runtime.model_resource_gate import ModelResourceGate
 from photo_search.search import profile as profile_module
+from photo_search.search.retrieval import SearchScope, authoritative_page
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CLIP_MANIFEST = REPO_ROOT / "tools" / "prepare_models" / "manifests" / "chinese-clip-vit-b-16.json"
@@ -1261,16 +1263,13 @@ def test_the_selected_provider_serves_search_and_reports_the_strong_match_statis
     app.state.api.close()
 
 
-def test_candidate_pause_resume_preserves_confirmed_vectors(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Candidate resume continues real persisted work without duplicate vector rows."""
-    from photo_search.artifacts.store import generation_id_for
+def _candidate_manager(
+    env: FlowEnv, monkeypatch: pytest.MonkeyPatch, encoder: StubAdapter, manifest: Path
+) -> CandidateBuildManager:
     from photo_search.models.embedding import management as embedding_management
     from photo_search.models.embedding import registry as registry_module
 
-    env = FlowEnv.build(tmp_path, photos=101)
-    spec = semantic.semantic_spec(CLIP_MANIFEST, {})
+    spec = encoder.spec()
     identity = SimpleNamespace(
         space_id=str(spec.envelope["space_id"]),
         processor_id=str(spec.processor_id),
@@ -1283,8 +1282,8 @@ def test_candidate_pause_resume_preserves_confirmed_vectors(
         installed=True,
         reason=None,
         identity=identity,
-        model_dir=tmp_path / "synthetic-model",
-        manifest_path=CLIP_MANIFEST,
+        model_dir=env.tmp_path / "synthetic-model",
+        manifest_path=manifest,
         device_policy="cpu_allowed",
     )
     registry = SimpleNamespace(
@@ -1310,7 +1309,6 @@ def test_candidate_pause_resume_preserves_confirmed_vectors(
         def release_query_encoder_for_candidate() -> None:
             return None
 
-    encoder = StubAdapter(spec)
     monkeypatch.setattr(
         "photo_search.workers.query_encoder.build_worker_query_encoder",
         lambda **_kwargs: encoder,
@@ -1319,7 +1317,18 @@ def test_candidate_pause_resume_preserves_confirmed_vectors(
         "photo_search.models.embedding.cli._record_candidate_runtime", lambda *_args: None
     )
 
-    manager = CandidateBuildManager(_Context())
+    return CandidateBuildManager(_Context())
+
+
+def test_candidate_pause_resume_preserves_confirmed_vectors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Candidate resume continues real persisted work without duplicate vector rows."""
+    from photo_search.artifacts.store import generation_id_for
+
+    env = FlowEnv.build(tmp_path, photos=101)
+    spec = semantic.semantic_spec(CLIP_MANIFEST, {})
+    manager = _candidate_manager(env, monkeypatch, StubAdapter(spec), CLIP_MANIFEST)
     original_build_index = semantic.build_index
     calls = 0
 
@@ -1334,7 +1343,7 @@ def test_candidate_pause_resume_preserves_confirmed_vectors(
         return payload
 
     monkeypatch.setattr(semantic, "build_index", pause_after_first_batch)
-    started = manager.start(entry.provider_id, "candidate-pause-resume", exclusive_confirmed=True)
+    started = manager.start("candidate-resume-test", "candidate-pause-resume", exclusive_confirmed=True)
     worker = manager._thread
     assert worker is not None
     worker.join(timeout=120)
@@ -1342,9 +1351,10 @@ def test_candidate_pause_resume_preserves_confirmed_vectors(
 
     paused = manager.status()
     assert paused is not None and paused["status"] == "PAUSED"
-    generation_id = generation_id_for(identity.space_id, identity.processor_id)
+    generation_id = generation_id_for(str(spec.envelope["space_id"]), str(spec.processor_id))
+    dimension = int(spec.envelope["dimension"])
     index = LanceVectorIndex(vectors_dir(env.data_root))
-    paused_rows = index.rows(generation_id=generation_id, dimension=identity.dimension)
+    paused_rows = index.rows(generation_id=generation_id, dimension=dimension)
     assert paused["confirmed_entries"] == len(paused_rows) == 100
     assert len({int(row["asset_id"]) for row in paused_rows}) == 100
 
@@ -1360,7 +1370,7 @@ def test_candidate_pause_resume_preserves_confirmed_vectors(
     assert completed["task_id"] == started["task_id"]
     assert resumed["status"] == "RUNNING"
     assert completed["confirmed_entries"] == 101
-    rows = index.rows(generation_id=generation_id, dimension=identity.dimension)
+    rows = index.rows(generation_id=generation_id, dimension=dimension)
     asset_ids = [int(row["asset_id"]) for row in rows]
     assert len(asset_ids) == len(set(asset_ids)) == 101
     with Catalog.open(data_root=env.data_root) as catalog:
@@ -1371,3 +1381,181 @@ def test_candidate_pause_resume_preserves_confirmed_vectors(
         )
         assert int(counts["total"]) == int(counts["confirmed"]) == 101
     assert calls >= 2
+
+
+def test_candidate_recovers_current_failures_across_batches_and_keeps_history(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from photo_search.jobs import queue
+
+    env = FlowEnv.build(tmp_path, photos=7)
+    candidate = semantic.semantic_spec(QWEN_EXIF_V2_MANIFEST, {})
+    space_id, processor_id = str(candidate.envelope["space_id"]), str(candidate.processor_id)
+    qwen = StubAdapter(candidate, pytorch=True)
+    clip = StubAdapter(semantic.semantic_spec(CLIP_MANIFEST, {}))
+    with env.service() as service:
+        active = build_space(service, provider="clip", adapter=clip)["profile"]["profile_id"]
+        originals = {path.name: path.read_bytes() for path in env.library.glob("*.jpg")}
+        ids = {
+            str(row["relative_path"]): int(row["asset_id"])
+            for row in service.catalog.read_all("SELECT relative_path, asset_id FROM file_locations")
+        }
+        with service.catalog.write() as connection:
+            favorite = ids["photo-000.jpg"]
+            connection.execute(
+                "INSERT INTO asset_favorites(asset_id, added_at_ms) VALUES (?, 1)", (favorite,)
+            )
+        (env.library / "photo-001.jpg").unlink()
+        (env.library / "photo-006.jpg").unlink()
+
+    encode = qwen.encode_image
+
+    def legacy_failures(path: str) -> list[float]:
+        name = Path(path).name
+        if name in {"photo-002.jpg", "photo-004.jpg", "photo-005.jpg"}:
+            raise CatalogError("RUNTIME_CAPABILITY_UNAVAILABLE", "semantic model adapter was replaced")
+        if name == "photo-003.jpg":
+            return [1.0]
+        return encode(path)
+
+    monkeypatch.setattr(qwen, "encode_image", legacy_failures)
+    monkeypatch.setattr("photo_search.models.embedding.candidate_task.BATCH_LIMIT", 2)
+    manager = _candidate_manager(env, monkeypatch, qwen, QWEN_EXIF_V2_MANIFEST)
+
+    def result() -> dict[str, Any]:
+        worker = manager._thread
+        assert worker is not None
+        worker.join(timeout=30)
+        assert not worker.is_alive()
+        state = manager.status(refresh_counts=False)
+        assert state is not None
+        return state
+
+    started = manager.start("candidate-resume-test", "legacy-incident", exclusive_confirmed=True)
+    first = result()
+    assert first["status"] == "FAILED"
+    assert first["job_progress"] == {
+        "failed": 6, "pending": 0, "historical_failed": 0,
+        "errors": {
+            "SOURCE_FILE_MISSING": 2, "RUNTIME_CAPABILITY_UNAVAILABLE": 3,
+            "RUNTIME_RESOLUTION_MISMATCH": 1,
+        },
+    }
+
+    kept = tmp_path / "kept-source"
+    kept.mkdir()
+    for number in range(1, 6):
+        name = f"photo-{number:03d}.jpg"
+        (kept / name).write_bytes(originals[name])
+    with env.service() as service:
+        kept_id = int(service.register_source(display_name="kept", root_path=kept)["source_id"])
+        service.run_scan(kept_id)
+        (kept / "photo-005.jpg").unlink()
+        service.run_scan(kept_id)
+        (kept / "photo-001.jpg").unlink()  # Vanished without a scan, so still PRESENT.
+        service.delete_source(1)
+        with service.catalog.write() as connection:
+            obsolete = queue.enqueue(
+                connection, subject_type="asset", subject_id=str(ids["photo-002.jpg"]),
+                input_revision="f" * 64, task_type=semantic.SEMANTIC_TASK_TYPE,
+                processor_id=processor_id, now_ms=1,
+            )
+            connection.execute(
+                "UPDATE jobs SET state='FAILED', last_error_code='SOURCE_FILE_MISSING' WHERE job_id=?",
+                (obsolete,),
+            )
+        matches = authoritative_page(service.catalog, SearchScope(availability="present"), limit=20)
+        assert set(matches["asset_ids"]) == {ids[f"photo-{n:03d}.jpg"] for n in range(1, 5)}
+        assert ids["photo-000.jpg"] not in authoritative_page(
+            service.catalog, SearchScope(), limit=20
+        )["asset_ids"]
+
+    monkeypatch.setattr(qwen, "encode_image", lambda path: (
+        [1.0] if Path(path).name == "photo-003.jpg" else encode(path)
+    ))
+    qwen.paths.clear()
+    manager.resume(started["task_id"])
+    second = result()
+    assert second["status"] == "FAILED"
+    assert second["job_progress"] == {
+        "failed": 2, "pending": 0, "historical_failed": 3,
+        "errors": {"SOURCE_FILE_MISSING": 1, "RUNTIME_RESOLUTION_MISMATCH": 1},
+    }
+    assert [Path(path).name for path in qwen.paths] == ["photo-002.jpg", "photo-004.jpg"]
+
+    for name in ("photo-001.jpg", "photo-005.jpg"):
+        (kept / name).write_bytes(originals[name])
+    with env.service() as service:
+        service.run_scan(kept_id)
+    monkeypatch.setattr(qwen, "encode_image", encode)
+    qwen.paths.clear()
+    manager.resume(started["task_id"])
+    completed = result()
+    assert completed["status"] == "COMPLETED"
+    assert completed["job_progress"] == {"failed": 0, "pending": 0, "historical_failed": 2, "errors": {}}
+    assert [Path(path).name for path in qwen.paths] == ["photo-001.jpg", "photo-003.jpg", "photo-005.jpg"]
+
+    with env.open_catalog() as catalog:
+        assert profile_module.active_profile_id(catalog.connection) == active
+        assert semantic_breakdown(catalog, space_id=space_id, processor_id=processor_id) == {
+            "total": 5, "confirmed": 5, "failed": 0, "queued": 0, "pending": 0,
+        }
+        assert catalog.read_one("SELECT asset_id FROM asset_favorites")["asset_id"] == favorite
+        assert catalog.read_one("SELECT state FROM jobs WHERE job_id=?", (obsolete,))["state"] == "FAILED"
+        assert catalog.read_one(
+            "SELECT state FROM index_entries WHERE generation_id=? AND asset_id=?",
+            (completed["generation_id"], favorite),
+        )["state"] == "CONFIRMED"
+    assert (env.library / "photo-000.jpg").read_bytes() == originals["photo-000.jpg"]
+
+    qwen.paths.clear()
+    manager.start("candidate-resume-test", "historical-jobs-only", exclusive_confirmed=True)
+    no_work = result()
+    assert no_work["status"] == "COMPLETED"
+    assert no_work["last_batch"]["targets"] == no_work["last_batch"]["checked"] == 0
+    assert no_work["last_batch"]["coverage_complete"] is True
+    assert no_work["job_progress"]["historical_failed"] == 2
+    assert qwen.paths == []
+
+
+def test_candidate_rechecks_scope_when_scan_restores_a_skipped_position(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from photo_search.places.revision import read_filter_revision
+
+    env = FlowEnv.build(tmp_path, photos=3)
+    spec = semantic.semantic_spec(CLIP_MANIFEST, {})
+    adapter = StubAdapter(spec)
+    manager = _candidate_manager(env, monkeypatch, adapter, CLIP_MANIFEST)
+    monkeypatch.setattr("photo_search.models.embedding.candidate_task.BATCH_LIMIT", 1)
+    with env.open_catalog() as catalog, catalog.write() as connection:
+        connection.execute(
+            "UPDATE file_locations SET availability='MISSING' WHERE relative_path='photo-000.jpg'"
+        )
+    build = semantic.build_index
+
+    def restore_between_batches(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        payload = build(*args, **kwargs)
+        if len(adapter.paths) == 1:
+            with env.service() as service:
+                before = read_filter_revision(service.catalog.connection)
+                service.run_scan(1)
+                assert read_filter_revision(service.catalog.connection) == before
+        return payload
+
+    monkeypatch.setattr(semantic, "build_index", restore_between_batches)
+    task = manager.start("candidate-resume-test", "restore-between-batches", exclusive_confirmed=True)
+    assert manager._thread is not None
+    manager._thread.join(timeout=30)
+    paused = manager.status(refresh_counts=False)
+    assert paused is not None and paused["status"] == "PAUSED"
+    assert paused["last_error"]["code"] == "LIBRARY_SCOPE_CHANGED"
+    assert len(adapter.paths) == 2
+
+    manager.resume(task["task_id"])
+    assert manager._thread is not None
+    manager._thread.join(timeout=30)
+    completed = manager.status(refresh_counts=False)
+    assert completed is not None and completed["status"] == "COMPLETED"
+    assert Path(adapter.paths[-1]).name == "photo-000.jpg"
+    assert len(adapter.paths) == 3

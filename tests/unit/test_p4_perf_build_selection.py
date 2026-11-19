@@ -45,6 +45,14 @@ def test_selection_keeps_read_pages_bounded_across_unsupported_candidates(
         assert opened == list(names[:7])  # SQL lookahead must not decode the eighth image.
         assert len(sizes) > 1 and max(sizes) <= 3
 
+        bounded = semantic.semantic_selection(
+            library.catalog, space_id="new-space", processor_id="new-provider",
+            limit=2, scan_limit=3,
+        )
+        assert bounded["targets"] == [] and bounded["checked"] == 3
+        assert bounded["coverage_complete"] is False
+        assert bounded["after_asset_id"] == library.assets[names[2]]
+
         second = semantic.semantic_selection(
             library.catalog, space_id="new-space", processor_id="new-provider",
             after_asset_id=first["targets"][-1]["asset_id"], limit=1,

@@ -39,17 +39,21 @@ def image_location_sql(alias: str = "l") -> str:
 
 
 def photo_asset_sql(
-    *, asset_alias: str = "a", source_id: int | None = None
+    *,
+    asset_alias: str = "a",
+    source_id: int | None = None,
+    require_location: bool = False,
 ) -> tuple[str, list[int]]:
-    """Keep zero-location legacy assets; otherwise require a qualifying image path."""
+    """Require an image path, with an opt-in for strict search location checks."""
     alias = "photo_location"
     predicate = image_location_sql(alias)
-    if source_id is not None:
+    if source_id is not None or require_location:
+        source_predicate = f"AND {alias}.source_id = ? " if source_id is not None else ""
         return (
             f"EXISTS (SELECT 1 FROM file_locations AS {alias} "
             f"INDEXED BY idx_file_locations_asset WHERE {alias}.asset_id = "
-            f"{asset_alias}.asset_id AND {alias}.source_id = ? AND {predicate})",
-            [int(source_id)],
+            f"{asset_alias}.asset_id {source_predicate} AND {predicate})",
+            [int(source_id)] if source_id is not None else [],
         )
     return (
         f"(NOT EXISTS (SELECT 1 FROM file_locations AS any_location WHERE "

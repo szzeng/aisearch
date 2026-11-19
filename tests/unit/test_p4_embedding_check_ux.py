@@ -111,6 +111,19 @@ const checkBody=(eligible,covered=4,required=4,offline=0)=>({status:"ok",provide
   assert.match(statusText(),/点击检查/,"candidate-build state changes invalidate the previous check");
   status.candidate_task=null;await ui.load();
   assert.match(statusText(),/点击检查/,"candidate-build terminal transition leaves the card unchecked");
+  status.candidate_task={task_id:"task1",provider_id:"qwen",status:"FAILED",last_error:{code:"FAILED_JOBS"},
+    job_progress:{failed:1,historical_failed:6974,errors:{SOURCE_FILE_MISSING:1}}};
+  await ui.load();
+  const activeModel=()=>get("active-search-model").textContent;
+  assert.match(activeModel(),/当前有效照片编码失败 1 张/);
+  assert.match(activeModel(),/历史失效任务 6974 条/);
+  assert.match(activeModel(),/源文件缺失 1 项/);
+  assert.ok(buttons().some(button=>button.textContent==="继续建库"));
+  status.candidate_task={task_id:"task1",provider_id:"qwen",status:"COMPLETED",
+    job_progress:{failed:0,historical_failed:6974,errors:{}}};
+  await ui.load();
+  assert.match(activeModel(),/候选建库结果：COMPLETED，历史失效任务 6974 条/);
+  assert.doesNotMatch(activeModel(),/当前有效照片编码失败/);
   ui.enter("browse");assert.equal(Object.keys(ui.checks).length,0,"entering the page again clears transient conclusions");
 
   status.providers=[Object.assign(identity(),{generation:null,generation_id:"gen1",profile_id:null,index_state:"NO_GENERATION"})];

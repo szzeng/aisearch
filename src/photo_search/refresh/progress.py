@@ -30,6 +30,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from photo_search.artifacts.store import generation_id_for
 from photo_search.ocr import contract as ocr_contract
 
 #: The frozen semantic task type (P2/P4 spelling), the same constant
@@ -193,64 +194,39 @@ def semantic_breakdown(
     work is sitting in the durable queue right now.
     """
     clause, parameters = _scope_clause(source_id, source_ids=source_ids)
-    total = int(
-        catalog.read_one(
-            "SELECT COUNT(*) AS n FROM ("
-            "SELECT CAST(j.subject_id AS INTEGER) AS asset_id FROM jobs AS j "
-            "WHERE j.subject_type = 'asset' AND j.task_type = ? AND j.processor_id = ? "
-            f"AND CAST(j.subject_id AS INTEGER) IN ({clause})"
-            " UNION "
-            "SELECT e.asset_id FROM index_entries AS e "
-            "WHERE e.space_id = ? AND e.state = 'CONFIRMED' "
-            f"AND e.asset_id IN ({clause})"
-            ")",
-            (
-                SEMANTIC_TASK_TYPE,
-                str(processor_id),
-                *parameters,
-                str(space_id),
-                *parameters,
-            ),
-        )["n"]
+    generation_id = generation_id_for(str(space_id), str(processor_id))
+    row = catalog.read_one(
+        f"WITH scope AS ({clause}), classified AS ("
+        "SELECT a.asset_id, 0 AS confirmed, "
+        f"j.state IN ({_placeholders(_REFUSED_JOB_STATES)}) AS failed, "
+        f"j.state IN ({_placeholders(_LIVE_JOB_STATES)}) AS queued "
+        "FROM jobs AS j JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
+        "AND a.sha256 = j.input_revision "
+        "WHERE j.subject_type = 'asset' AND j.task_type = ? AND j.processor_id = ? "
+        "AND a.asset_id IN (SELECT asset_id FROM scope) "
+        "UNION ALL "
+        "SELECT e.asset_id, 1, 0, 0 FROM index_entries AS e "
+        "JOIN artifacts AS ar ON ar.artifact_id = e.artifact_id "
+        "JOIN assets AS a ON a.asset_id = e.asset_id AND a.sha256 = ar.input_revision "
+        "WHERE e.space_id = ? AND e.generation_id = ? AND e.state = 'CONFIRMED' "
+        "AND e.asset_id IN (SELECT asset_id FROM scope)"
+        "), per_asset AS ("
+        "SELECT MAX(confirmed) AS confirmed, MAX(failed) AS failed, MAX(queued) AS queued "
+        "FROM classified GROUP BY asset_id"
+        ") SELECT COUNT(*) AS total, SUM(confirmed) AS confirmed, "
+        "SUM(failed AND NOT confirmed) AS failed, SUM(queued AND NOT confirmed) AS queued "
+        "FROM per_asset",
+        (*parameters, *_REFUSED_JOB_STATES, *_LIVE_JOB_STATES,
+         SEMANTIC_TASK_TYPE, str(processor_id), str(space_id), generation_id),
     )
-    confirmed = int(
-        catalog.read_one(
-            "SELECT COUNT(*) AS n FROM index_entries AS e "
-            "JOIN artifacts AS ar ON ar.artifact_id = e.artifact_id "
-            "JOIN assets AS a ON a.asset_id = e.asset_id "
-            "WHERE e.space_id = ? AND e.state = 'CONFIRMED' AND ar.input_revision = a.sha256 "
-            f"AND e.asset_id IN ({clause})",
-            (str(space_id), *parameters),
-        )["n"]
-    )
-    failed = int(
-        catalog.read_one(
-            "SELECT COUNT(*) AS n FROM jobs AS j "
-            "JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
-            "WHERE j.subject_type = 'asset' AND j.task_type = ? AND j.processor_id = ? "
-            f"AND j.state IN ({_placeholders(_REFUSED_JOB_STATES)}) "
-            "AND j.input_revision = a.sha256 "
-            f"AND a.asset_id IN ({clause})",
-            (SEMANTIC_TASK_TYPE, str(processor_id), *_REFUSED_JOB_STATES, *parameters),
-        )["n"]
-    )
-    queued = int(
-        catalog.read_one(
-            "SELECT COUNT(*) AS n FROM jobs AS j "
-            "JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
-            "WHERE j.subject_type = 'asset' AND j.task_type = ? AND j.processor_id = ? "
-            f"AND j.state IN ({_placeholders(_LIVE_JOB_STATES)}) "
-            "AND j.input_revision = a.sha256 "
-            f"AND a.asset_id IN ({clause})",
-            (SEMANTIC_TASK_TYPE, str(processor_id), *_LIVE_JOB_STATES, *parameters),
-        )["n"]
-    )
+    total = int(row["total"])
+    confirmed, failed, queued = (int(row[key] or 0) for key in ("confirmed", "failed", "queued"))
     return {
         "total": total,
         "confirmed": confirmed,
         "failed": failed,
         "queued": queued,
-        "pending": max(total - confirmed - failed, 0),
+        "pending": total - confirmed - failed,
     }
 
 
