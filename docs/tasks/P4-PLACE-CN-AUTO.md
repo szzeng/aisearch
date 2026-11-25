@@ -6,127 +6,145 @@
 
 Windows 发布包实测：建库完成后「地点相册」为空；用户点击「整理地点 → 高级维护 → 更新中国地点」后，中国地点才出现，而「地图相册」一直正常。
 
-这证明当前发布包中的中国行政区数据与照片 GPS 至少能够在手动流程中完成匹配。问题重点是**中国行政区派生结果没有随建库/刷新自动生成**，不是地图瓦片缺失，也不应通过重新扫描照片或重建 GPS 数据库解决。
+这说明当前照片 GPS 和中国行政区数据可以通过手动流程完成匹配；问题重点是**中国行政区派生结果没有随建库/刷新自动生成**。不应通过重新扫描照片、重新提取 GPS 或重建 GPS 数据库解决。
 
-目标：把中国行政区匹配接入现有图库刷新流程，使：
-- 新图库首次建库完成时，已有有效 GPS 的中国照片已自动生成地点结果。
-- 已有图库升级到新版本后，自动补齐历史照片。
-- 日常新增或 GPS 变化的照片自动更新地点。
-- 中断、关闭程序或阶段失败后可以继续，不丢待处理项。
+目标：
+- 新图库首次建库后，中国地点自动可用。
+- 已有图库升级后，自动补齐历史照片。
+- 日常新增照片或 GPS 变化后，自动补充/更新地点。
+- 处理中断或程序重启不丢工作。
 - 正常使用不再要求用户手动点击「更新中国地点」。
 
-个人项目范围：沿用现有 GPS、CN 数据包、地点相册与刷新机制；不建设通用任务平台，不重做地点 UI。
+个人项目原则：优先复用现有表、索引、revision 和派生结果；保持实现简单，不建设通用任务平台。
 
-## 2. 当前代码事实（实施前须重新核对 HEAD）
+## 2. 当前代码事实（实施前重新核对 HEAD）
 
-已核对的当前实现基线：
+### 2.1 已有数据与状态
 
-### 2.1 刷新流水线
+- `asset_geo_facts`：每个资产一条当前 GPS 事实，`asset_id` 是主键；GPS 更新时会更新 `geo_fact_id`、`input_revision`、`fact_revision`。
+- `cn_admin_resolutions`：保存中国行政区派生结果，复合主键为 `dataset_id + asset_id + geo_fact_id + input_revision + processor_id`。因此可直接判断当前 GPS 是否已经有当前数据包/处理器版本的结果。
+- `cn_update_runs`：现有按 dataset 保存的全量高水位与续跑进度；`start()` 会重置游标，`inputs()` 每批最多读取 100 条，`publish()` 持久推进进度。
+- `metadata`：已有 key/value 表，可保存轻量的处理版本标记，不需要为此新增表。
+- `map_member_revision`：已有单调 revision。migration 0017 的触发器会在 `asset_geo_facts` 插入/更新/删除，以及资产内容/状态和照片位置可用性变化时递增；CN 结果写入本身不会递增它。
+- `cn_admin_resolutions` 的复合主键可用于按 dataset、asset、GeoFact、input revision 和 processor 查询现有结果。
 
-- `refresh/pipeline.py::refresh_library()` 在扫描、搜索投影和语义阶段后，调用 `_enrichment_stages()`。
-- 当前 enrichment 顺序包括 `thumbnail`、`taken_time`、`gps`、`place_resolver`、`face`、`ocr`；中国行政区匹配尚未接入。
-- 日常 refresh 使用内存 `content_delta`；扫描器的 `DELTA_LIMIT=50,000`，单个 enrichment 的 `ENRICH_LIMIT=5,000`。
-- build 模式使用 `_drain_scope()`，按 `BUILD_PAGE_SIZE=5,000` 分页遍历来源资产，并受现有 build round cap 约束。
-- `_gps_stage()` 先对目标资产调度 GPS extractor；CN 匹配必须在 GPS 阶段之后，只消费已经发布且仍有效的 GeoFact。
+### 2.2 当前刷新链路
 
-### 2.2 中国地点现有流程
+- `refresh/pipeline.py::refresh_library()` 在扫描、搜索投影和语义阶段后调用 `_enrichment_stages()`。
+- 当前 enrichment 已有 `gps` 和附近城市 `place_resolver`，但尚未接入中国行政区匹配。
+- 日常 refresh 有内存 `content_delta`（上限 50,000）和单阶段 `ENRICH_LIMIT=5,000`；build 模式使用有界来源分页。
+- 当前 `POST /places/admin/update` 手动接口会加载活动数据包并调用 CN 分批处理；地点页按钮是目前主要触发入口。
 
-- `places/cn_facets.py` 已实现 `start / inputs / calculate / publish`，结果写入不可变的 `cn_admin_resolutions`。
-- `cn_update_runs` 是按 dataset 保存的全量高水位进度：`start()` 将游标重置到 0 并记录当时的最大 asset_id；`inputs()` 每批最多读取 100 条游标范围内的有效 WGS84 GPS；`calculate()` 跳过已有当前结果的照片；`publish()` 写结果并推进游标。
-- 当前地点页按钮调用 `POST /places/admin/update`。按钮发现上次运行已完成时会传 `restart=true`，重新从头检查全量 GPS。
-- 因此，现有 `cn_update_runs` 适合首次全量补齐与中断续跑，**不能直接当作日常增量队列**。每次普通刷新重置它，会重新遍历全库；只保留已完成游标，又会漏掉游标之后新产生或变化的 GeoFact。
-- `cn_admin_resolutions` 的结果身份包含 dataset、asset、GeoFact、input revision 和 processor；`members_sql()` 会按活动 dataset、当前资产/GPS revision、有效坐标基准、PRESENT 位置及人工控制/排除规则筛选成员。
+## 3. 核心方案：不新增专用数据表
 
-## 3. 核心设计要求
+**默认禁止新增 CN pending/queue 表、通用任务表或数据库 migration。** 优先只使用以下现有结构：
 
-必须将处理分成两条互不混淆的路径：
+1. `cn_update_runs`：只负责首次全量补齐和未完成全量任务的断点续跑。
+2. `cn_admin_resolutions`：既是结果表，也是“当前 GPS 已处理”的事实依据。
+3. `map_member_revision` + `metadata`：用一个轻量 revision 标记判断地图/GPS 事实自上次 CN 检查后是否发生变化。
+4. SQL `NOT EXISTS`：只挑出当前有效 GPS 尚无当前 CN 结果的照片。
 
-### A. 首次全量 / 升级补齐
+### 3.1 首次全量 / 旧图库升级
 
-1. 新图库 build：在 GPS 阶段完成后，自动启动 CN 全量补齐；按现有 100 条内部批次处理，直到完成、取消或达到现有安全停止条件。
-2. 已有图库升级：检测活动 CN dataset 尚无完整运行记录或全量补齐未完成时，自动创建/续接，不要求用户点击按钮。
-3. 中断后根据持久化进度续做；已写入的不可变结果幂等复用，不重新执行几何匹配。
-4. 活动 dataset 切换后，新 dataset 有自己的补齐进度与结果身份；不得把旧包结果当成新包结果。
-5. 全量完成后保留完成状态；普通 refresh 不得调用 `start()` 把全量游标重置到 0。
+- 新 dataset 没有 `cn_update_runs` 时，自动调用现有 `start()` 建立全量游标。
+- run 未完成时，自动续接现有 `inputs/calculate/publish`，保留每批 100 条与持久化进度。
+- 新图库 build 可在一次 build 的 CN 阶段中持续处理至完成、取消或达到现有安全预算；普通 refresh 对历史补齐使用有界预算，剩余工作留待后续 refresh。
+- 已有图库升级时，即使照片 GPS 早已存在、没有新的 `content_delta`，也必须因为缺少当前 dataset 的全量完成状态而自动启动补齐。
+- 全量完成后保留 `cn_update_runs.complete=1`。普通 refresh 绝不能再次调用 `start()` 重置全量游标。
 
-### B. 日常增量
+### 3.2 日常增量：缺失结果反查
 
-1. 全量补齐完成后，只处理新增或当前 GeoFact/input revision 尚无匹配 CN 结果的资产。
-2. **不能只依赖内存 `content_delta`**：它有 50,000 上限，且刷新可能在 GPS 结果写入后、CN 阶段执行前中断；下一次扫描未必再次产生相同 delta。
-3. 必须提供可靠、持久、可恢复的待处理识别机制。实施前先检查现有 GPS job/GeoFact 写入链路及索引，选择最小方案：
-   - 优先复用已有持久任务/结果状态；或
-   - 使用经索引验证的“当前有效 GeoFact 缺少当前 dataset/processor/revision 对应 CN 结果”选择器；或
-   - 若以上不能保证不漏项且不反复全表扫描，增加一个用途单一的 CN pending 表/最小 migration，并在 GPS 结果发布或等价可靠边界持久登记待处理身份。
-4. 选择器/队列必须覆盖：GPS 阶段已完成但 CN 阶段未运行、刷新取消、进程退出、delta overflow、单次处理预算用尽、同一资产 GeoFact 后续变化等情况。
-5. 每次普通 refresh 使用有界预算，优先沿用现有 `ENRICH_LIMIT=5,000` 量级；内部可继续按 100 条提交。未完成项必须持久保留到下一次 refresh，不能静默丢弃。
-6. 已有当前结果的资产不得重复进行几何计算；新 revision 产生新结果，旧不可变结果保留但不能成为当前地点成员。
-7. 必须用 SQL 查询计划/针对性测试证明正常增量轮次不会每次全表重扫。若选择 anti-join，需检查其索引与 EXPLAIN；若选择 pending queue，需证明入队与 GPS 结果发布之间没有崩溃丢失窗口。
+全量完成后，不再使用全量游标，也不依赖内存 `content_delta` 作为正确性保障。
 
-**实现者须在报告中说明最终选择的持久待处理机制、为什么不会漏项，以及为什么普通 refresh 不会全库重扫。不得在没有证据时假定现有高水位游标或内存 delta 已满足增量要求。**
+- 为活动 dataset/processor 在现有 `metadata` 中保存最近一次完成 CN 检查时的 `map_member_revision`。key 至少绑定 dataset ID、数据包内容身份和 processor ID，避免换包或升级解析器后误用旧标记。
+- 普通 refresh 先比较当前 `map_member_revision` 与 metadata 标记。相同则 CN 阶段直接跳过，不执行照片级查询；不同则进行一次增量 catch-up。
+- 增量查询从当前有效的 `asset_geo_facts` 出发，要求资产内容 revision 仍匹配、GPS 状态有效且 datum 为 WGS84/ASSUMED_WGS84，并通过 `NOT EXISTS` 检查是否缺少当前 dataset、当前 `geo_fact_id`、`input_revision` 和 processor 的 `cn_admin_resolutions`。
+- 每批最多 100 条，按 `asset_id` keyset 顺序读取；单次普通 refresh 总处理量有界，优先沿用 `ENRICH_LIMIT=5,000`。同一次 refresh 内使用局部游标，避免每个小批次都从头查询。
+- 每批写入后，已完成照片自然不再满足 `NOT EXISTS`；未完成照片没有结果，下一次 refresh 仍能被查到。程序在 GPS 事实发布后、CN 阶段开始前退出也不会漏项。
+- 超过单次预算时不更新 metadata 完成标记；下一次 refresh 再从 SQL 缺失结果中继续。无需额外 pending 表或持久化逐照片队列。
+- 所有 CN 结果仍绑定当前 dataset、GeoFact、input revision 和 processor；写入前复核活动数据包与当前 GPS 身份，拒绝迟到结果。
 
-## 4. 流水线接入与执行边界
+### 3.3 revision 标记的安全提交
 
-- 在 `_enrichment_stages()` 中增加独立 `cn_admin` 阶段，顺序在 `gps` 之后；它不依赖 GeoNames 附近城市 `place_resolver` 的结果。
-- 仅在现有 `enrich=True` 的 enrichment 路径执行；遵守 refresh 的取消、阶段状态、错误隔离和资源生命周期。
-- build 模式已有 5,000 条 scope 分页。若 CN 阶段使用自己的 `cn_update_runs` 全量游标，应在一个阶段中执行一次，不能被每个 scope page 重复启动/重置；若使用 scope page 定向处理，则必须有自己的持久续做机制。不要把两种分页层级意外叠加。
-- 几何/边界数据在一次 CN 阶段运行中加载并复用；不能像当前 HTTP 手动接口那样每处理 100 条就重新冷加载整份 package。
-- 复用 `cn_facets.calculate/publish` 的身份复核与不可变写入约束；可抽取共享的内部批处理服务供 refresh 和手动 API 调用，避免复制两套实现。不要在进程内通过 HTTP 调用自己的 API。
-- 无活动数据包、包无 CN addon、包校验失败时，CN 阶段明确 SKIPPED/失败原因；不得阻断扫描、搜索索引或地图相册。
-- CN 阶段失败时保留待处理项并可重试；按现有 refresh 语义报告 PARTIAL_FAILED，不把可恢复的可选地点派生失败升级为核心图库失败。
-- 状态至少区分 full backfill 与 incremental，报告 scanned、newly resolved、remaining/pending、complete；不能把“请求已提交”当成处理完成。
+- 开始 catch-up 时读取 `map_member_revision` 快照。
+- 只有当缺失结果查询已确认没有待处理项时，才在一个短写事务内重新读取当前 revision。
+- 仅当当前 revision 仍等于开始快照时，才将该值写入现有 `metadata`；如果处理中又有 GPS、资产内容或位置可用性变化，则不推进标记，下次 refresh 再检查。
+- metadata key 按 dataset/content identity/processor 区分。新数据包或 processor 版本没有旧标记，会自动触发一次检查。
+- `map_member_revision` 对文件位置变化也可能产生额外触发，这是允许的保守误报；关键是 GPS 事实变化不会漏报。CN 结果写入不触发该 revision，避免自我循环。
 
-## 5. 人工数据与相册行为保护
+### 3.4 SQL 性能边界
 
-- 机器行政区结果只写既有 CN 派生表；不得写入/覆盖 `asset_place_assignments`、`places` 人工目录、`asset_place_exclusions` 或操作历史。
-- 不改变 `cn_facets.members_sql()` 的当前资产、GeoFact、活动包、PRESENT、有效 datum、人工锁与排除条件。
-- MANUAL_ASSIGNED、MANUAL_UNASSIGNED、有效排除及撤销后的成员行为必须与现状一致。
-- UNKNOWN、UPPER_ONLY、边界/重叠结果遵循现有几何解析契约；不得猜测或补造区县。OSM 数据覆盖有限，不承诺所有中国 GPS 都能解析到区县。
-- 地图相册、地图 GPS 聚合、底图、照片索引和搜索语义不在本卡范围内。
+- 优先使用现有 `asset_geo_facts` 主键、`cn_admin_resolutions` 复合主键和现有索引；先看 `EXPLAIN QUERY PLAN` 和合成图库实测，不先加索引。
+- 必须如实区分：该方案在 revision 未变化时完全跳过 CN 查询；revision 变化时可能遍历 catalog 中的 GPS 事实行来确认缺项，但**不扫描原始照片、不读取 EXIF、不重新提取 GPS、不做已完成照片的几何匹配**。
+- 如果查询计划/耗时确实不合格，先优化 SQL；仍不够时才提出对现有表增加一个窄索引。不得以性能为由直接增加 pending 表。
+- 不允许把内存 `content_delta` 当唯一增量来源，因为它有上限，且不能覆盖 GPS 写入后、CN 阶段前崩溃的情况。
+
+## 4. 刷新流水线接入
+
+- 在 `refresh/pipeline.py::_enrichment_stages()` 增加独立 `cn_admin` 阶段，必须在 `gps` 之后；不依赖附近城市 `place_resolver` 的结果。
+- 仅在现有 `enrich=True` 路径执行，遵循 refresh 取消、阶段状态、错误隔离和资源生命周期。
+- CN 阶段一次加载并复用活动数据包几何内容；不能每处理 100 条就重新冷加载/校验整份 package。
+- build 模式的来源分页与 CN 自己的 100 条批次不能意外嵌套重置；CN 全量 run 在一个阶段内推进一次，遵循现有 build 安全预算。
+- 抽取共享的内部批处理函数，供自动 refresh 与手动 API 共用；不要通过 HTTP 调用自身 API，也不要维护两套解析实现。
+- 无活动数据包、无 CN addon 或包校验失败时，CN 阶段明确报告 SKIPPED/失败原因；不能阻断扫描、搜索索引或地图相册。
+- CN 是可选派生阶段。失败时保留可恢复状态并报告 `PARTIAL_FAILED`，不升级为核心图库失败。
+- 阶段状态区分 full backfill 与 incremental，报告 scanned、newly resolved、remaining/pending、complete；不能把“请求已提交”当作处理完成。
+
+## 5. 数据与人工操作保护
+
+- 机器结果只写现有 `cn_admin_resolutions`；不得写入/覆盖 `asset_place_assignments`、人工 `places` 目录、`asset_place_exclusions` 或操作历史。
+- 不改变 `cn_facets.members_sql()` 对活动 dataset、当前资产/GPS revision、PRESENT 位置、有效 datum、人工控制和排除条件的判断。
+- MANUAL_ASSIGNED、MANUAL_UNASSIGNED、有效排除和撤销行为必须与现状一致。
+- UNKNOWN、UPPER_ONLY、边界/重叠结果遵循现有几何解析契约；不得猜测或补造区县。OSM 覆盖有限，不承诺每张中国 GPS 照片都能解析到区县。
+- 不改地图相册、GPS 聚合、底图、照片索引或搜索语义。
+- 不重新扫描照片、不读取 EXIF、不运行向量、人脸、OCR、缩略图或模型推理。
 
 ## 6. 手动入口与 UI
 
-- 保留「更新中国地点」作为手动补齐/故障恢复入口，并与自动处理共用同一内部服务。
-- 正常自动流程不得依赖用户点击该按钮。
-- 普通点击不能在全量完成后无提示地把全量游标重置到 0。默认只继续未完成/待处理项；若确实需要强制全量重查，必须是明确的维护动作，不作为日常更新语义。
-- 地点页最小调整状态文案，区分自动整理中、仍有待处理、已完成、不可用/失败可重试；不重做管理页面。
-- 沿用现有 capabilities/status 能力；如需新状态字段，保持 API 加性兼容。
+- 保留「更新中国地点」作为手动补齐/故障恢复入口，与自动 refresh 共用内部批处理函数。
+- 普通点击默认继续未完成全量或缺失结果 catch-up；全量已完成且 revision 未变化时应显示已完成，不得无提示地重置全量游标。
+- 若确实需要强制全量重查，保留为明确的维护动作，不作为正常日常更新语义。
+- 地点页最小调整状态文案：自动整理中、仍有待处理、已完成、不可用/失败可重试；不重做管理页面。
+- 优先沿用现有 capabilities/status API；若新增状态字段，保持 API 加性兼容。
 
 ## 7. 验证计划
 
-全部使用隔离合成图库，不访问用户真实照片、真实 PhotoSearchData 或实际发布包数据。
+全部使用隔离合成图库，不访问真实照片、真实 PhotoSearchData 或实际发布包数据。
 
-1. **首次 build**：至少 5,101 张有效中国 GPS 合成照片，覆盖 100 条 CN 批次和 5,000 条 build 分页边界；build 完成后无需调用手动 API，省/市/区县相册能读取匹配结果。
-2. **旧图库升级**：已有大量有效 GPS、没有 CN run 的 catalog；第一次普通 refresh 自动启动补齐，进度持久化。
-3. **中断续跑**：处理若干批后取消/模拟进程重启；下一次 refresh 继续，已完成照片不重复做几何计算，最终无遗漏。
-4. **GPS→CN 崩溃窗口**：模拟 GeoFact 已发布但 CN 阶段尚未开始就中断；下一次 refresh 仍能发现并处理该 GeoFact。
-5. **日常新增**：全量完成后新增带 GPS 照片；普通 refresh 自动加入正确地点；再次 refresh 不重复解析、不重置全量游标。
-6. **变化与失效**：覆盖同一资产的 GeoFact/input revision 变化、旧结果失效、无 GPS/无效 datum、非 PRESENT 位置。
-7. **预算与溢出**：覆盖单次 5,000 预算、超过预算、delta overflow、剩余工作跨多次 refresh；证明无静默丢失。
-8. **人工保护**：MANUAL_ASSIGNED、MANUAL_UNASSIGNED、有效排除及撤销；机器整理不改人工状态，成员 SQL 结果符合原合同。
-9. **数据包与并发**：活动 dataset 切换、旧批次迟到发布、手动更新与自动 refresh 竞争；旧 dataset 结果不得污染新 dataset。
-10. **降级**：无活动包、无 CN addon、损坏包、解析异常；其他核心功能继续可用，失败原因明确且可重试。
-11. **性能**：检查增量待处理查询的 EXPLAIN/索引；确认几何数据一次阶段加载并复用，正常无待处理项时不重复全表遍历。
-12. **回归**：GPS 提取、附近城市 resolver、CN 省/市/区县浏览分页/搜索、人工归属与撤销、refresh 取消/恢复、地图 API 与状态展示。
+1. **新图库首次 build**：至少 5,101 张有效中国 GPS 照片，跨越 100 条 CN 批次与 5,000 条预算边界；build 后不调用手动 API，地点相册能显示结果。
+2. **已有图库升级**：预置历史有效 GPS、无当前 dataset 的完整 run；第一次 refresh 自动启动全量补齐。
+3. **全量中断续跑**：完成若干 100 条批次后取消/模拟重启；下一次 refresh 续跑，不重复做已完成几何计算。
+4. **GPS→CN 崩溃窗口**：GeoFact 已提交但 CN 阶段尚未执行时模拟退出；下次 refresh 由 revision 变化触发缺失结果反查并补齐。
+5. **日常新增**：全量完成后新增有 GPS 照片，map revision 改变，普通 refresh 自动解析；再次 refresh 在 revision 不变时跳过 CN 查询。
+6. **GPS 变化**：已有资产的 GeoFact/input revision 改变后，旧结果不再匹配，新 revision 被反查并生成新结果。
+7. **预算与续做**：超过 5,000 条缺失结果时单次 refresh 有界停止；已处理结果不重算，下一次 refresh 继续，最终无遗漏。
+8. **revision 竞争**：CN catch-up 期间插入/更新 GeoFact；最终 revision fence 不推进旧标记，下一次 refresh 能补齐。
+9. **数据包/处理器变化**：切换 dataset 或 processor ID 后旧 metadata 标记不得复用；新身份触发补齐。
+10. **人工保护**：MANUAL_ASSIGNED、MANUAL_UNASSIGNED、有效排除和撤销；机器处理不改变人工状态，成员 SQL 结果符合原合同。
+11. **降级**：无活动包、无 CN addon、损坏包、解析异常与取消；其他核心功能继续可用，失败可重试。
+12. **查询计划与性能**：记录 anti-join 的 `EXPLAIN QUERY PLAN`；验证使用现有结果主键做存在性检查，revision 不变时完全跳过；在合成大图库中记录 revision 变化时的 catalog 查询耗时。只有实测需要才提议现有表索引。
+13. **回归**：GPS 提取、附近城市 resolver、CN 省/市/区县浏览分页/搜索、人工归属与撤销、refresh 取消/恢复、地图 API 和状态展示。
 
-复用已有 CN 几何、数据包和 30 万合成查询证据；不重下 PBF、不重建地名包、不重复执行完整 30 万性能套件，除非新实现改变了相关查询并有明确理由。新增测试只覆盖本卡真实受影响路径。
+复用已有 CN 几何、数据包和 30 万合成查询证据；不重下 PBF、不重建地名包、不重复执行完整 30 万性能套件，除非本次 SQL/写入路径确实改变并有明确理由。新增测试只覆盖本卡真实受影响路径。
 
 ## 8. Windows 手动验收
 
 使用实现后的新源码/新发布包和隔离图库：
 
-1. 新建图库并完成建库，直接打开地点相册，不点击「更新中国地点」；确认有可匹配 GPS 的中国照片已出现。
-2. 新增一张中国 GPS 照片，执行普通刷新，确认它自动出现。
-3. 关闭并重启程序，确认结果保留；再次普通刷新不触发全量重算。
-4. 用已有图库升级，确认首次刷新自动补齐；中断后再次刷新可续做。
-5. 手动入口只验证为补齐/修复手段，不作为自动化通过的前提。
+1. 新建图库并完成建库，直接打开地点相册，不点击「更新中国地点」；确认可匹配 GPS 的中国照片已出现。
+2. 新增一张中国 GPS 照片，执行普通 refresh，确认自动出现。
+3. 关闭并重启程序，确认地点结果保留；再次 refresh 且 map revision 未变化时，不再执行 CN 反查。
+4. 使用已有图库升级，确认首次 refresh 自动补齐历史照片；中断后再次 refresh 可续做。
+5. 手动入口只作为补齐/修复路径验证，不作为自动化通过前提。
 
 ## 9. 交付与停止条件
 
-- 最小实现代码、必要的单一用途 migration（仅在现有机制无法可靠持久化增量时）、受影响定向测试及少量 UI 状态调整。
-- 新增 `docs/reports/P4-PLACE-CN-AUTO.md`：记录实际流水线顺序、全量/增量分流、pending 机制、预算、恢复行为、查询计划、测试结果和未验事项。
+- 最小代码实现、受影响定向测试和少量 UI 状态调整。
+- **默认不新增表、不新增 pending queue、不新增 migration。** 若 EXPLAIN 与实测证明现有索引不足，只允许先提出针对现有表的窄索引方案并说明收益；不得自行扩大为新表/任务系统。
+- 新增 `docs/reports/P4-PLACE-CN-AUTO.md`：记录全量/增量分流、metadata revision 标记、SQL 查询、预算、恢复行为、EXPLAIN、测试结果和未验事项。
 - 同步 `docs/development-status.md`，准确标注实施与验证状态。
 - 不自动生成/发布正式 Windows EXE/ZIP；发布包重建与用户现场验收另行执行。
 - 不操作真实照片、真实 catalog、用户数据根或用户地名包；不下载 PBF/模型，不改人工地点数据。
-- 若实现需要改写人工地点协议、改变地图成员语义或引入通用后台调度平台，先停止并说明，不擅自扩大范围。
+- 若现有 `map_member_revision` / `metadata` 无法提供可靠变更检测，先给出具体漏报证据与最小替代方案；未获确认前不新增表或 migration。
 
-**完成标准：新图库首次建库自动出现可匹配的中国地点；已有图库升级自动补齐；日常新增/变化自动更新；中断后不丢工作；正常 refresh 不反复全量扫描；用户无需再手动点击「更新中国地点」。**
+**完成标准：新图库首次建库自动出现可匹配的中国地点；已有图库升级自动补齐；日常新增/变化自动更新；中断后不丢工作；无变化时跳过 CN 查询；不新增专用数据表；用户无需再手动点击「更新中国地点」。**
