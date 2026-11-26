@@ -892,6 +892,7 @@ def _with_progress(
         source_id=int(payload["source_id"]),
         binding=binding,
         available=available,
+        location_counts=payload["counts"],
     )
     return payload
 
@@ -924,24 +925,41 @@ async def create_source(request: Request, payload: SourceCreateRequest) -> dict[
 
 
 @router.get("/sources/{source_id}", response_model=SourceDetail, summary="One source")
-async def get_source(request: Request, source_id: int) -> dict[str, Any]:
+async def get_source(request: Request, source_id: int) -> dict[str, Any] | Response:
     context = context_of(request)
     service = context.service()
-    return await run_catalog_read(
+
+    async def wait_for_disconnect() -> None:
+        while (await request.receive())["type"] != "http.disconnect":
+            pass
+
+    work = asyncio.create_task(context.source_detail_reads.read(
         service.catalog, _source_detail_read, source_id,
         context=context, data_root=service.data_root,
-    )
+    ))
+    disconnected = asyncio.create_task(wait_for_disconnect())
+    try:
+        await asyncio.wait((work, disconnected), return_when=asyncio.FIRST_COMPLETED)
+        if work.done():
+            return work.result()
+        disconnected.result()
+        return Response(status_code=499)
+    finally:
+        disconnected.cancel()
+        work.cancel()
+        await asyncio.gather(disconnected, work, return_exceptions=True)
 
 
 def _source_detail_read(catalog: Any, source_id: int, *, context: ApiContext, data_root: Path) -> dict[str, Any]:
     service = CatalogService(catalog, data_root=data_root)
-    binding, available = _source_progress_context(context, service)
-    return _with_progress(
-        service,
-        service.get_source(int(source_id)),
-        binding=binding,
-        available=available,
-    )
+    with catalog.read_snapshot():
+        binding, available = _source_progress_context(context, service)
+        return _with_progress(
+            service,
+            service.get_source(int(source_id)),
+            binding=binding,
+            available=available,
+        )
 
 
 @router.patch("/sources/{source_id}", response_model=SourceSummary, summary="Rename a photo source")

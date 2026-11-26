@@ -1,6 +1,6 @@
 # P4-ORPHAN-ASSET-CLEANUP-FIX
 
-状态：IMPLEMENTED / SOL REVIEW PASS / BROWSER PENDING。基线：`8f18a69`。仅使用隔离合成数据；不访问或修改真实图库。最终定向 169 项通过，后续强化 catalog 重开重放的索引与清理组合 65 项通过；最终产品全量 23 个历史失败、52 skipped、无新增失败。用户明确指定独立 Sol 完整影响面复核，已完成且无剩余代码阻断项；内置浏览器验收仍待完成。详见[报告](../reports/P4-ORPHAN-ASSET-CLEANUP-FIX.md)。
+状态 **SCOPED PASS / SOL REVIEW PASS / USER ACCEPTED**。用户确认实际使用验收通过。基线：`8f18a69`。仅使用隔离合成数据；不访问或修改真实图库。最终定向 169 项通过，后续强化 catalog 重开重放的索引与清理组合 65 项通过；最终产品全量 23 个历史失败、52 skipped、无新增失败。用户明确指定独立 Sol 完整影响面复核，已完成且无剩余代码阻断项；内置浏览器当时未完成，后续由用户确认使用验收。详见[报告](../reports/P4-ORPHAN-ASSET-CLEANUP-FIX.md)。
 
 ## 范围与不变量
 

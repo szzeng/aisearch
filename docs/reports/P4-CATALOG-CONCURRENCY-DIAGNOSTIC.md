@@ -306,3 +306,7 @@ uv run --offline --no-sync python -m pytest -q @selectedTests --basetemp=.pytest
 用户指定 Terra High 替代 A0 默认 DS-H，执行完整受影响面独立审查。 按 V3.1 §2.4 的覆盖要求核对改动文件、修复前 watchdog 堆栈、Future 同步与异步回调、submit/close、cancel/finished、Memories 唤醒、读/投影/搜索直接入口、线程连接与数据根 lease。未发现 P0/P1/P2 或未解决的 ADR、租约安全风险。
 
 独立审查重跑 7 个锁序场景，**7/7 通过，退出 0**，证据为 `test-results/p4-catalog-concurrency-a0/terra-review.xml`。审查者核验原 328 项受影响回归 JUnit，并核对无 I/O 局部计时的适用范围。真实图库、事故现场归因、真实模型和硬件、压力容量及 A/B 其余验收仍在本次范围外。
+
+## A1 后续实施与验收 · 2026-11-27
+
+A0 已以 `3d6ad4f` 推送至 `origin/master`。用户确认两个前置功能的使用验收并豁免随机浏览时间的独立复核。A1 在合成基线复现双明细占满两个 Worker 后加入口容量保护、请求生命周期与空范围快照优化。最终受影响 JUnit 400/400，前端定向 3/3。截至本轮，真实页面的登记、重开、空与非空明细、排队和窄窗口已观察。独立审查与失败重试的浏览器尾项待完成。详见[A1 执行报告](P4-CATALOG-CONCURRENCY-A1.md)。

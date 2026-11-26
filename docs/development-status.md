@@ -1,6 +1,10 @@
-## Current task: P4-CATALOG-CONCURRENCY-A0（2026-11-26）
+## Current task: P4-CATALOG-CONCURRENCY-A1（2026-11-27）
 
-**A0 SCOPED PASS / TERRA HIGH REVIEW PASS**。合成子进程复现 `_lock` 与 `_activity` 双向互等，修改为锁外注册 Future 完成回调。复现前 1 个目标失败、4 个阴性对照通过，修复后 7 个新增场景及最终受影响 JUnit 328/328 通过。取消/关闭、Memories 和数据根 lease 回归通过。 Ruff、compileall 和 diff-check 通过。用户指定的独立 Terra High 完整受影响面审核通过，独立重跑 7/7，无 P0/P1/P2 发现。未提交、未推送。详见[工作包 A 任务卡](tasks/P4-SOURCE-DETAIL-STABILITY.md#a0--查询池锁序p0)和[诊断报告](reports/P4-CATALOG-CONCURRENCY-DIAGNOSTIC.md#a0-后续验证--查询池锁序死锁)。
+**A1 IMPLEMENTED / VALIDATION PENDING**。图库明细按来源单飞并保留有效缓存，入口有界等待并在实际 Future 结束后释放容量。空范围复用只读快照和位置计数，读 SQL 13→8（无模型合成臂）。最终受影响 JUnit 400/400，含 A0 7/7 和真实 HTTP 断开/关闭回归；前端定向 3/3。已观察合成图库真实页面、窄窗口和排队，用户停止 Computer Use 后，页面失败/重试由自动测试覆盖，未现场复验。独立完整受影响面审查待办。 [任务卡](tasks/P4-SOURCE-DETAIL-STABILITY.md#a1--图库明细读取与前台响应) · [执行报告](reports/P4-CATALOG-CONCURRENCY-A1.md)
+
+## Previous task: P4-CATALOG-CONCURRENCY-A0（2026-11-26）
+
+**A0 SCOPED PASS / TERRA HIGH REVIEW PASS**。合成子进程复现 `_lock` 与 `_activity` 双向互等，修改为锁外注册 Future 完成回调。复现前 1 个目标失败、4 个阴性对照通过，修复后 7 个新增场景及最终受影响 JUnit 328/328 通过。取消/关闭、Memories 和数据根 lease 回归通过。 Ruff、compileall 和 diff-check 通过。用户指定的独立 Terra High 完整受影响面审核通过，独立重跑 7/7，无 P0/P1/P2 发现。提交 `3d6ad4f` 已推送至 `origin/master`。详见[工作包 A 任务卡](tasks/P4-SOURCE-DETAIL-STABILITY.md#a0--查询池锁序p0)和[诊断报告](reports/P4-CATALOG-CONCURRENCY-DIAGNOSTIC.md#a0-后续验证--查询池锁序死锁)。
 
 ## Current task: P4-MEDIA-ARW-WEBP-A（2026-11-26）
 
@@ -10,18 +14,18 @@
 
 **IMPLEMENTED / VALIDATION PENDING**：refresh 在 GPS 后自动推进 CN 全量或增量处理，复用现有表和版本标记；合成 5,101 条跨批次及 5,000 条续做通过。受影响 JUnit 91/91，最后并发初始化修正后 CN/UI 定向 18/18；为组合证据。用户指定的 Terra High 简要独立复核发现的两项状态展示问题已修复并复看通过，修复后 CN/UI JUnit 19/19；非原定 DS-H 全影响面审查。内置浏览器不可用，任务卡完整故障矩阵仍 PENDING，未访问真实图库。详见[任务卡](tasks/P4-PLACE-CN-AUTO.md)和[报告](reports/P4-PLACE-CN-AUTO.md)。
 
-## Current task: P4-PHOTO-RANDOM-BROWSE-TIME（2026-11-26）
+## Previous task: P4-PHOTO-RANDOM-BROWSE-TIME（2026-11-26）
 
-**IMPLEMENTED / VALIDATION PENDING**：随机页按可信拍摄时间、受控文件创建时间、未知的顺序显示，普通列表保留加入时间；每页批量读取时间，仅对缺失者查受控位置。定向 JUnit 22/22；隔离真实浏览器检查与独立只读复核仍 PENDING，未访问真实图库。详见[任务卡](tasks/P4-PHOTO-RANDOM-BROWSE-TIME.md)和[报告](reports/P4-PHOTO-RANDOM-BROWSE-TIME.md)。
+**SCOPED PASS / USER ACCEPTED**。随机页按可信拍摄时间、受控文件创建时间、未知的顺序显示，普通列表保留加入时间；每页批量读取时间，仅对缺失者查受控位置。定向 JUnit 22/22，用户确认实测通过并豁免独立只读复核。未记录用户实测设备或截图。详见[任务卡](tasks/P4-PHOTO-RANDOM-BROWSE-TIME.md)和[报告](reports/P4-PHOTO-RANDOM-BROWSE-TIME.md)。
 
-## Next planned专项：P4-CATALOG-CONCURRENCY-STABILITY（2026-11-26）
+## 父专项 P4-CATALOG-CONCURRENCY-STABILITY（2026-11-27）
 
-**A0 之外 PLANNED / NOT STARTED**：数据库并发与前台响应稳定性专项，统一诊断、分开实施、联合验收。工作包 A [P4-SOURCE-DETAIL-STABILITY](tasks/P4-SOURCE-DETAIL-STABILITY.md)：图库明细请求去重/缓存、未建库空 scope 快速路径、只读 Worker 与 SQL 诊断。工作包 B [P4-FOREGROUND-WRITE-FAIRNESS-A](tasks/P4-FOREGROUND-WRITE-FAIRNESS-A.md)：人物写操作线程隔离、前台写意图、后台安全批次让步及任务恢复。父任务：[P4-CATALOG-CONCURRENCY-STABILITY](tasks/P4-CATALOG-CONCURRENCY-STABILITY.md)。执行顺序为共享诊断 → A → B → 联合并发回归；两工作包不并行修改共享调度基础设施。其余工作启动前须完成当前 P4-PHOTO-RANDOM-BROWSE-TIME 剩余验收及 P4-ORPHAN-ASSET-CLEANUP-FIX 尚未完成的浏览器验收。
+**A0 已通过，A1 验收待收口，B 尚未开始**。数据库并发与前台响应稳定性专项，统一诊断、分开实施、联合验收。工作包 A [P4-SOURCE-DETAIL-STABILITY](tasks/P4-SOURCE-DETAIL-STABILITY.md)：图库明细请求去重/缓存、未建库空 scope 快速路径、只读 Worker 与 SQL 诊断。工作包 B [P4-FOREGROUND-WRITE-FAIRNESS-A](tasks/P4-FOREGROUND-WRITE-FAIRNESS-A.md)：人物写操作线程隔离、前台写意图、后台安全批次让步及任务恢复。父任务：[P4-CATALOG-CONCURRENCY-STABILITY](tasks/P4-CATALOG-CONCURRENCY-STABILITY.md)。执行顺序为共享诊断 → A → B → 联合并发回归；两工作包不并行修改共享调度基础设施。A1 的启动门槛已由用户确认收口。
 
 
 ## Previous task: P4-ORPHAN-ASSET-CLEANUP-FIX（2026-11-19）
 
-**IMPLEMENTED / SOL REVIEW PASS / BROWSER PENDING**：搜索默认 PRESENT；零位置资产经明确预览和确认后分批复核清理，复用持久 scope、屏障和向量删除协议。最终定向 169 项通过，增强 catalog 重开后的清理及索引组合 65 项通过；最终产品全量 3,879 项，23 个历史失败、52 skipped、无新增失败。按用户指定独立 Sol 完整影响面复核无剩余代码阻断项；内置浏览器真实页面验收仍待完成。未清理真实图库。详见[任务卡](tasks/P4-ORPHAN-ASSET-CLEANUP-FIX.md)和[报告](reports/P4-ORPHAN-ASSET-CLEANUP-FIX.md)。
+**SCOPED PASS / SOL REVIEW PASS / USER ACCEPTED**。搜索默认 PRESENT；零位置资产经明确预览和确认后分批复核清理，复用持久 scope、屏障和向量删除协议。最终定向 169 项通过，增强 catalog 重开后的清理及索引组合 65 项通过；最终产品全量 3,879 项，23 个历史失败、52 skipped、无新增失败。按用户指定独立 Sol 完整影响面复核无剩余代码阻断项；用户确认实测通过，未记录用户实测设备或截图。实现验收未清理真实图库。详见[任务卡](tasks/P4-ORPHAN-ASSET-CLEANUP-FIX.md)和[报告](reports/P4-ORPHAN-ASSET-CLEANUP-FIX.md)。
 
 ## Previous task: P4-SEMANTIC-FAILED-JOBS-RECOVERY（2026-11-19）
 

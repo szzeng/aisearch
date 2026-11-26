@@ -476,14 +476,23 @@ def source_progress(
     source_id: int,
     binding: Mapping[str, Any] | None,
     available: Mapping[str, bool] | None = None,
+    location_counts: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
-    """The whole durable card of one source: scan counts, semantic backlog, enrichments."""
+    """The durable source card. Reuse location counts when read in the same snapshot."""
     available = dict(available or {})
-    scan = scan_progress(catalog, source_id=source_id)
+    if location_counts is None:
+        scan = scan_progress(catalog, source_id=source_id)
+    else:
+        scan = {
+            "files": int(location_counts["locations"]),
+            "present": int(location_counts["locations_present"]),
+            "missing": int(location_counts["locations_missing"]),
+        }
     # "Has a build classified this scope?" is durable and separate from the semantic counts:
     # a scope whose files are all documents has zero of both, and only this marker tells the
     # card that the sweep really happened (P4-02Y-I review F2).
     classified_once = source_built(catalog, source_id=int(source_id))
+    total_assets = scoped_asset_count(catalog, source_id=int(source_id))
     stages: dict[str, Any] = {}
     if binding is None:
         semantic: dict[str, Any] = {
@@ -498,12 +507,14 @@ def source_progress(
             "generation_id": None,
         }
     else:
-        breakdown = semantic_breakdown(
-            catalog,
-            source_id=int(source_id),
-            space_id=str(binding["space_id"]),
-            processor_id=str(binding["processor_id"]),
-        )
+        breakdown = {"total": 0, "confirmed": 0, "pending": 0, "failed": 0, "queued": 0}
+        if total_assets:
+            breakdown = semantic_breakdown(
+                catalog,
+                source_id=int(source_id),
+                space_id=str(binding["space_id"]),
+                processor_id=str(binding["processor_id"]),
+            )
         semantic = {
             "state": semantic_state(breakdown, built=classified_once),
             "reason": None,
@@ -512,7 +523,6 @@ def source_progress(
             "generation_id": str(binding["generation_id"]),
         }
     stages["semantic"] = semantic
-    total_assets = scoped_asset_count(catalog, source_id=int(source_id))
     for name, task_type, processor_id, fact_table in ENRICHMENT_STAGES:
         if name != "ocr" and not bool(available.get(name, name not in _NEEDS_WEIGHTS)):
             stages[name] = {
@@ -524,7 +534,12 @@ def source_progress(
             }
             continue
         if name == "ocr":
-            counts = ocr_enrichment_counts(catalog, source_id=int(source_id))
+            if total_assets:
+                counts = ocr_enrichment_counts(catalog, source_id=int(source_id))
+            else:
+                counts = dict.fromkeys(
+                    ("total", "succeeded", "handled", "pending", "failed", "blocked", "unattempted", "attempted"), 0,
+                )
             runtime_available = bool(available.get("ocr", True))
             stage_state = _ocr_enrichment_state(counts)
             if not runtime_available and (
@@ -532,13 +547,15 @@ def source_progress(
             ):
                 stage_state = STAGE_UNAVAILABLE
         else:
-            counts = enrichment_counts(
-                catalog,
-                source_id=int(source_id),
-                task_type=task_type,
-                processor_id=processor_id,
-                fact_table=fact_table,
-            )
+            counts = {"handled": 0, "pending": 0, "attempted": 0}
+            if total_assets:
+                counts = enrichment_counts(
+                    catalog,
+                    source_id=int(source_id),
+                    task_type=task_type,
+                    processor_id=processor_id,
+                    fact_table=fact_table,
+                )
             runtime_available = True
             stage_state = _enrichment_state(counts, total_assets)
         stages[name] = {

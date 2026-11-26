@@ -1,6 +1,6 @@
 # P4-CATALOG-CONCURRENCY-STABILITY — 数据库并发与前台响应稳定性专项
 
-建卡日期：2026-11-26。状态：**A0 SCOPED PASS，其余 PLANNED**。实施基线：GitHub `master`，`b334bd75a020108bf826e2790d2850290bf4210a`。
+建卡日期：2026-11-26。状态 **A0 SCOPED PASS / A1 IMPLEMENTED · VALIDATION PENDING / B PLANNED**。实施基线：GitHub `master`，`b334bd75a020108bf826e2790d2850290bf4210a`。
 
 本卡是专项父任务，只负责统一问题边界、诊断方案、执行顺序和联合验收。产品改动分别由工作包 A、B 承担。初始规划提交仅建立和关联任务文档。A0 的运行证据记录于下。
 
@@ -8,7 +8,11 @@
 
 **A0 SCOPED PASS / TERRA HIGH REVIEW PASS**。合成子进程复现 `_lock` 与 `_activity` 双向互等，修改为锁外注册 Future 完成回调。复现前 1 个目标失败、4 个阴性对照通过，修复后 7 个新增场景及最终受影响 JUnit 328/328 通过。取消/关闭、Memories 和数据根 lease 回归通过。 结果见[诊断报告的 A0 后续验证](../reports/P4-CATALOG-CONCURRENCY-DIAGNOSTIC.md#a0-后续验证--查询池锁序死锁)。
 
-A0 是用户单独授权的 P0。用户指定 Terra High 替代 A0 默认 DS-H，执行完整受影响面独立审查。 独立重跑 7/7，无 P0/P1/P2 发现。A 其余明细、前端生命周期、SQL 诊断工作和 B 尚未启动，原启动门槛继续适用。
+A0 是用户单独授权的 P0。用户指定 Terra High 替代 A0 默认 DS-H，执行完整受影响面独立审查。 独立重跑 7/7，无 P0/P1/P2 发现。A0 单独验收。
+
+## A1 · 图库明细读取（2026-11-27）
+
+**A1 IMPLEMENTED / VALIDATION PENDING**。图库明细按来源单飞并保留有效缓存，入口有界等待并在实际 Future 结束后释放容量。空范围复用只读快照和位置计数，读 SQL 13→8（无模型合成臂）。最终受影响 JUnit 400/400，含 A0 7/7 和真实 HTTP 断开/关闭回归；前端定向 3/3。已观察合成图库真实页面、窄窗口和排队，用户停止 Computer Use 后，页面失败/重试由自动测试覆盖，未现场复验。独立完整受影响面审查待办。 [A1 报告](../reports/P4-CATALOG-CONCURRENCY-A1.md)
 
 ## 0. 任务结构与关系
 
@@ -16,7 +20,7 @@ A0 是用户单独授权的 P0。用户指定 Terra High 替代 A0 默认 DS-H�
 
 | 工作包 | 任务卡 | 负责问题 | 状态 |
 |---|---|---|---|
-| A | [P4-SOURCE-DETAIL-STABILITY](P4-SOURCE-DETAIL-STABILITY.md) | 查询池锁序、图库明细读取卡顿、重复请求和 Worker 排队 | A0 SCOPED PASS / TERRA HIGH REVIEW PASS。其余 PLANNED |
+| A | [P4-SOURCE-DETAIL-STABILITY](P4-SOURCE-DETAIL-STABILITY.md) | 查询池锁序、图库明细读取卡顿、重复请求和 Worker 排队 | A0 SCOPED PASS。A1 IMPLEMENTED / VALIDATION PENDING |
 | B | [P4-FOREGROUND-WRITE-FAIRNESS-A](P4-FOREGROUND-WRITE-FAIRNESS-A.md) | 后台建库期间前台人物写入等待、后台连续写入竞争和 API 事件循环阻塞 | PLANNED |
 
 两个问题共享“后台工作不能拖垮前台响应”的产品目标，但不能混成一把数据库锁：
@@ -232,7 +236,7 @@ A、B 分别通过后，使用同一个独立合成 data root 进行联合验收
 
 ## 12. 执行顺序与停止条件
 
-1. 当前未收口任务先完成：P4-PHOTO-RANDOM-BROWSE-TIME 的剩余浏览器检查/独立复核，以及 P4-ORPHAN-ASSET-CLEANUP-FIX 尚未完成的浏览器验收。不得并行启动本专项。
+1. 用户于 2026-11-26 确认 P4-PHOTO-RANDOM-BROWSE-TIME 与 P4-ORPHAN-ASSET-CLEANUP-FIX 的使用验收通过，并豁免随机浏览时间的独立复核。A1 前置门禁已通过。
 2. 阶段 0：共享诊断与修复前基线。
 3. 阶段 A：图库明细读取稳定性，单独实现与验收。
 4. 阶段 B：前台写入 Worker/意图协调/后台安全让步，单独实现与验收。

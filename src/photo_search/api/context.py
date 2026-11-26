@@ -18,6 +18,7 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from typing import Any
 
+from photo_search.api.catalog_reads import SourceDetailReads
 from photo_search.api.errors import Redactor
 from photo_search.api.face_detail_runner import FaceDetailRunner
 from photo_search.api.refresher import LibraryRefresher
@@ -64,6 +65,7 @@ class ApiContext:
         #: P2-06A: search sessions are process-local by design (architecture §9.5). A
         #: restart drops them, and a continuation token then answers SEARCH_SESSION_EXPIRED.
         self.search_sessions = SearchSessionStore()
+        self.source_detail_reads = SourceDetailReads()
         self._photo_collection_sources: dict[str, dict[str, Any]] = {}
         self._photo_collection_sources_lock = threading.RLock()
         self._encoder_factory = encoder_factory
@@ -595,6 +597,7 @@ class ApiContext:
             logger.debug("retrying application shutdown after deferred cleanup")
         if deferred:
             return False
+        self.source_detail_reads.close()
         workers = (
             ("_memories_runner", self._memories_runner),
             ("_embedding_candidate_manager", self._embedding_candidate_manager),

@@ -729,8 +729,10 @@ def source_list(catalog: Any, *, manifest_path: str | None, device_policy: str,
             source_id = int(row["source_id"])
             item = store.row_dict(row, store.SOURCE_FIELDS)
             item["counts"] = store.catalog_counts(catalog.connection, source_id=source_id)
-            item["progress"] = progress.source_progress(catalog, source_id=source_id,
-                                                        binding=binding, available=available)
+            item["progress"] = progress.source_progress(
+                catalog, source_id=source_id, binding=binding, available=available,
+                location_counts=item["counts"],
+            )
             sources.append(item)
         return {"sources": sources}
 

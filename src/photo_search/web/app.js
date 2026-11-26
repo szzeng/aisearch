@@ -61,6 +61,11 @@
     sourcesLoaded: false,
     sourcesLoadFailed: false,
     sourceDetails: {},
+    sourceDetailRequests: {},
+    sourceDetailFailures: {},
+    sourceDetailQueue: [],
+    sourceDetailActive: null,
+    sourceDetailGeneration: 0,
     sourcePathsById: {},
     sourcePathsLoaded: false,
     sourcePathsError: false,
@@ -462,13 +467,14 @@
     var requestVersion = state.sourcesRequestVersion;
     state.sourcePathsLoaded = false;
     setStatus(els.sourcesStatus, "正在读取图库入口…");
-    state.sourceDetails = {};
     return request("/sources/summary")
       .then(function (result) {
         if (requestVersion !== state.sourcesRequestVersion) {
           return;
         }
-        state.sources = (result.body && result.body.sources) || [];
+        var sources = (result.body && result.body.sources) || [];
+        reconcileSourceDetails(sources);
+        state.sources = sources;
         state.sourcesLoaded = true;
         state.sourcesLoadFailed = false;
         updateFirstUseGuide();
@@ -940,6 +946,7 @@
   }
 
   function renderSources() {
+    var generation = ++state.sourceDetailGeneration;
     els.sourcesList.textContent = "";
     if (!state.sources.length) {
       updateGlobalRefreshActions();
@@ -1007,17 +1014,21 @@
       var detailContent = element("div", "source-detail-content", "展开后读取统计与任务状态。");
       detail.appendChild(detailContent);
       detail.addEventListener("toggle", function () {
+        if (generation !== state.sourceDetailGeneration || els.views.sources.hidden) return;
         state.sourceDetailOpen[source.source_id] = detail.open;
         if (detail.open) {
-          loadSourceDetail(source, detailContent);
+          loadSourceDetail(source, detailContent, generation);
+        } else if (releaseSourceDetail(source.source_id, detailContent)) {
+          detailContent.textContent = "已停止等待，展开后可重新读取。";
         }
       });
       card.appendChild(detail);
       els.sourcesList.appendChild(card);
-      if (detail.open) {
-        loadSourceDetail(source, detailContent);
+      if (detail.open && !els.views.sources.hidden) {
+        loadSourceDetail(source, detailContent, generation, true);
       }
     });
+    pruneSourceDetailConsumers(generation);
   }
 
   function addSourceRename(card, source, title, actionContainer) {
@@ -1111,35 +1122,135 @@
     card.appendChild(form);
   }
 
-  function loadSourceDetail(source, container) {
-    var cached = state.sourceDetails[String(source.source_id)];
+  function invalidateSourceDetails(sourceIds) {
+    sourceIds.forEach(function (id) {
+      var key = String(id);
+      delete state.sourceDetails[key];
+      delete state.sourceDetailFailures[key];
+      var entry = state.sourceDetailRequests[key];
+      if (entry) stopSourceDetailRequest(entry);
+    });
+    startNextSourceDetail();
+  }
+
+  function reconcileSourceDetails(sources) {
+    var incoming = new Map(sources.map(function (source) { return [String(source.source_id), source]; }));
+    var changed = [];
+    state.sources.forEach(function (old) {
+      var key = String(old.source_id);
+      var current = incoming.get(key);
+      if (!current) delete state.sourceDetailOpen[key];
+      if (!current || current.last_successful_scan !== old.last_successful_scan ||
+          current.status !== old.status) changed.push(key);
+    });
+    invalidateSourceDetails(changed);
+  }
+
+  function stopSourceDetailRequest(entry) {
+    delete state.sourceDetailRequests[entry.key];
+    state.sourceDetailQueue = state.sourceDetailQueue.filter(function (queued) { return queued !== entry; });
+    if (state.sourceDetailActive === entry) state.sourceDetailActive = null;
+    if (entry.controller) entry.controller.abort();
+  }
+
+  function releaseSourceDetail(id, container) {
+    var entry = state.sourceDetailRequests[String(id)];
+    if (!entry) return false;
+    entry.consumers.delete(container);
+    if (entry.consumers.size === 0) stopSourceDetailRequest(entry);
+    startNextSourceDetail();
+    return true;
+  }
+
+  function pruneSourceDetailConsumers(generation) {
+    Object.values(state.sourceDetailRequests).forEach(function (entry) {
+      entry.consumers.forEach(function (consumer, container) {
+        if (consumer.generation !== generation) entry.consumers.delete(container);
+      });
+      if (entry.consumers.size === 0) stopSourceDetailRequest(entry);
+    });
+    startNextSourceDetail();
+  }
+
+  function sourceDetailError(source, container, generation, failure) {
+    container.textContent = "明细读取失败：" + describe(failure) + " ";
+    var retry = element("button", null, "重试读取明细");
+    retry.type = "button";
+    retry.addEventListener("click", function () {
+      if (generation !== state.sourceDetailGeneration) return;
+      delete state.sourceDetailFailures[String(source.source_id)];
+      loadSourceDetail(source, container, generation);
+    });
+    container.appendChild(retry);
+  }
+
+  function loadSourceDetail(source, container, generation, rendering) {
+    if (generation !== state.sourceDetailGeneration) return;
+    var key = String(source.source_id);
+    var cached = state.sourceDetails[key];
     if (cached) {
       renderSourceDetail(source, cached, container);
       return;
     }
-    container.textContent = "正在读取这个图库的统计与任务状态…";
-    request("/sources/" + encodeURIComponent(source.source_id))
+    if (state.sourceDetailFailures[key]) {
+      sourceDetailError(source, container, generation, state.sourceDetailFailures[key]);
+      return;
+    }
+    var entry = state.sourceDetailRequests[key];
+    if (!entry) {
+      entry = { key: key, consumers: new Map(), controller: null };
+      state.sourceDetailRequests[key] = entry;
+      state.sourceDetailQueue.push(entry);
+    }
+    entry.consumers.set(container, { source: source, generation: generation });
+    container.textContent = state.sourceDetailActive === entry ?
+      "正在读取这个图库的统计与任务状态…" : "明细正在排队…";
+    if (!rendering) startNextSourceDetail();
+  }
+
+  function startNextSourceDetail() {
+    if (state.sourceDetailActive || !state.sourceDetailQueue.length) return;
+    var entry = state.sourceDetailQueue.shift();
+    state.sourceDetailActive = entry;
+    if (typeof window.AbortController === "function") entry.controller = new window.AbortController();
+    entry.consumers.forEach(function (_consumer, container) {
+      container.textContent = "正在读取这个图库的统计与任务状态…";
+    });
+    request("/sources/" + encodeURIComponent(entry.key), { signal: entry.controller && entry.controller.signal })
       .then(function (result) {
+        if (state.sourceDetailRequests[entry.key] !== entry) return;
         var full = result.body || {};
-        state.sourceDetails[String(source.source_id)] = full;
-        renderSourceDetail(source, full, container);
+        state.sourceDetails[entry.key] = full;
+        entry.consumers.forEach(function (consumer, container) {
+          if (consumer.generation === state.sourceDetailGeneration) {
+            renderSourceDetail(consumer.source, full, container);
+          }
+        });
       })
       .catch(function (failure) {
-        container.textContent = "明细读取失败：" + describe(failure) + " ";
-        var retry = element("button", null, "重试读取明细");
-        retry.type = "button";
-        retry.addEventListener("click", function () {
-          loadSourceDetail(source, container);
+        if (state.sourceDetailRequests[entry.key] !== entry) return;
+        state.sourceDetailFailures[entry.key] = failure;
+        entry.consumers.forEach(function (consumer, container) {
+          if (consumer.generation === state.sourceDetailGeneration) {
+            sourceDetailError(consumer.source, container, consumer.generation, failure);
+          }
         });
-        container.appendChild(retry);
+      })
+      .finally(function () {
+        if (state.sourceDetailRequests[entry.key] === entry) delete state.sourceDetailRequests[entry.key];
+        if (state.sourceDetailActive === entry) state.sourceDetailActive = null;
+        startNextSourceDetail();
       });
   }
 
   function renderSourceDetail(source, detail, container) {
     var counts = detail.counts || {};
     var progress = detail.progress || null;
-    source = Object.assign({}, source, detail);
+    source = Object.assign({}, detail, source);
     container.textContent = "";
+    if (counts.assets === 0 && counts.locations_present === 0) {
+      container.appendChild(element("p", "source-meta", "暂无可统计的照片。"));
+    }
       var list = element("dl");
       var rows = [];
       if (progress && progress.scan) {
@@ -1695,6 +1806,8 @@
         state.refreshTimer = null;
         if (finished) {
           state.browse.loaded = false;
+          invalidateSourceDetails(Array.isArray(body.source_ids) ? body.source_ids :
+            state.sources.map(function (source) { return source.source_id; }));
           loadSources();
         }
       })
@@ -1914,6 +2027,8 @@
             String(body.assets_orphaned === undefined ? 0 : body.assets_orphaned) +
             " 个仅存于该来源的资产；原始照片 0 修改 / 0 删除。"
         );
+        invalidateSourceDetails([source.source_id]);
+        delete state.sourceDetailOpen[String(source.source_id)];
         return loadSources();
       })
       .catch(function (failure) {
@@ -1977,6 +2092,7 @@
             var summary = "扫描已结束。" + describeJob(job);
             // The refreshed list rebuilds the cards, so the final summary is written
             // back afterwards instead of disappearing with the old progress line.
+            invalidateSourceDetails([sourceId]);
             loadSources().then(function () {
               var refreshed = progressNode(sourceId);
               if (refreshed) {
@@ -3411,6 +3527,9 @@
 
   function showView(name) {
     var previousView = state.currentView;
+    if (previousView === "sources" && name !== "sources") {
+      pruneSourceDetailConsumers(++state.sourceDetailGeneration);
+    }
     if (previousView === "photoSmartCollection" && name !== "photoSmartCollection") {
       state.photoSmart.viewEpoch += 1;
       state.photoSmart.requestVersion += 1;
@@ -3457,6 +3576,7 @@
     els.main.focus({ preventScroll: true });
     if (name === "browse") showBrowseMode(state.browse.mode);
     if (name === "sources") {
+      if (previousView !== "sources" && state.sourcesLoaded) renderSources();
       loadSourcePaths(false);
       loadEmbeddingManagementStatus();
     }
@@ -5503,7 +5623,11 @@
       });
     });
     window.addEventListener("hashchange", handleHash);
+    window.addEventListener("pageshow", function (event) {
+      if (event.persisted && state.currentView === "sources") renderSources();
+    });
     window.addEventListener("pagehide", function () {
+      pruneSourceDetailConsumers(++state.sourceDetailGeneration);
       if (state.currentView !== "memories") return;
       try {
         fetch(API + "/memories/jobs", {method:"DELETE", credentials:"same-origin", keepalive:true,

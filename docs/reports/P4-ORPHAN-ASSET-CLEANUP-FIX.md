@@ -1,6 +1,6 @@
 # P4-ORPHAN-ASSET-CLEANUP-FIX
 
-状态：**IMPLEMENTED / SOL REVIEW PASS / BROWSER PENDING**。基线 `8f18a69`；未访问真实图库，未清理用户现场的 7,182 项。用户明确指定由独立 Sol 完成全受影响面复核。
+状态 **SCOPED PASS / SOL REVIEW PASS / USER ACCEPTED**。用户确认实测通过。以下保留当次执行证据。基线 `8f18a69`；未访问真实图库，未清理用户现场的 7,182 项。用户明确指定由独立 Sol 完成全受影响面复核。
 
 ## 原因和修复
 

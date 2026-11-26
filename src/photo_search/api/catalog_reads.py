@@ -5,11 +5,12 @@ import asyncio
 import sqlite3
 import threading
 import time
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from concurrent.futures import CancelledError, Future, ThreadPoolExecutor
 from typing import Any
 
+from photo_search.api.errors import ApiError
 from photo_search.catalog.db import Catalog
 from photo_search.catalog.errors import CATALOG_UNREADABLE, CatalogError
 from photo_search.catalog.sqlite_io import connect_rw, open_readonly
@@ -233,15 +234,98 @@ def wake_foreground_idle(catalog: Catalog) -> None:
         pool.wake_activity_waiters()
 
 
-async def _run_catalog_work(catalog: Catalog, query: Callable[..., Any], args: tuple[Any, ...],
-                            kwargs: dict[str, Any], *, projection: bool) -> Any:
-    future, request = _workers(catalog).submit(query, args, kwargs, projection=projection)
+class SourceDetailReads:
+    """One app's source detail admission, owned by its API event loop.
+
+    Permit one detail to occupy the shared pool and queue the next two outside it.
+    The slot follows the executor Future, including cleanup after an HTTP abort.
+    """
+
+    _MAX_WAITING = 2
+
+    def __init__(self) -> None:
+        self._active = False
+        self._closed = False
+        self._waiting: deque[asyncio.Future[bool]] = deque()
+
+    async def read(self, catalog: Catalog, query: Callable[..., Any], *args: Any,
+                   **kwargs: Any) -> Any:
+        if self._closed:
+            raise CatalogError(CATALOG_UNREADABLE, "source detail reads are closed")
+        loop = asyncio.get_running_loop()
+        if self._active:
+            if len(self._waiting) >= self._MAX_WAITING:
+                raise ApiError(
+                    "SOURCE_DETAIL_BUSY", "图库明细请求较多，请稍后重试。",
+                    status=503, details={"retryable": True},
+                )
+            ticket = loop.create_future()
+            self._waiting.append(ticket)
+            try:
+                granted = await ticket
+            except asyncio.CancelledError:
+                if ticket in self._waiting:
+                    self._waiting.remove(ticket)
+                elif not ticket.cancelled() and ticket.result():
+                    self._advance()
+                raise
+            if granted and self._closed:
+                self._advance()
+            if not granted or self._closed:
+                raise CatalogError(CATALOG_UNREADABLE, "source detail reads are closed")
+        else:
+            self._active = True
+
+        try:
+            future, request = _workers(catalog).submit(query, args, kwargs, projection=False)
+        except BaseException:
+            self._advance()
+            raise
+
+        def finished(_future: Future[Any]) -> None:
+            try:
+                loop.call_soon_threadsafe(self._advance)
+            except RuntimeError:
+                if not loop.is_closed():
+                    raise
+
+        future.add_done_callback(finished)
+        try:
+            return await _await_catalog_future(future, request)
+        except sqlite3.OperationalError as error:
+            if self._closed and getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_INTERRUPT:
+                raise CatalogError(CATALOG_UNREADABLE, "source detail reads are closed") from error
+            raise
+
+    def _advance(self) -> None:
+        while self._waiting:
+            ticket = self._waiting.popleft()
+            if not ticket.cancelled():
+                ticket.set_result(True)
+                return
+        self._active = False
+
+    def close(self) -> None:
+        self._closed = True
+        while self._waiting:
+            ticket = self._waiting.popleft()
+            if not ticket.cancelled():
+                ticket.set_result(False)
+
+
+async def _await_catalog_future(future: Future[Any], request: _Request) -> Any:
     try:
         return await asyncio.wrap_future(future)
     except asyncio.CancelledError:
         request.cancel()
         future.cancel()
         raise
+
+
+async def _run_catalog_work(catalog: Catalog, query: Callable[..., Any], args: tuple[Any, ...],
+                            kwargs: dict[str, Any], *, projection: bool) -> Any:
+    future, request = _workers(catalog).submit(query, args, kwargs, projection=projection)
+    return await _await_catalog_future(future, request)
 
 
 async def run_catalog_read(catalog: Catalog, query: Callable[..., Any], *args: Any,

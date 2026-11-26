@@ -255,7 +255,7 @@ def test_home_loads_rootless_summaries_and_source_scoped_browse() -> None:
     shell, script, style = _web_documents()
 
     assert 'request("/sources/summary")' in script
-    assert 'request("/sources/" + encodeURIComponent(source.source_id))' in script
+    assert 'request("/sources/" + encodeURIComponent(entry.key),' in script
     summaries = script.split("function loadSources()", 1)[1].split("function sourcePathsCoverSources", 1)[0]
     assert "root_path" not in summaries
     assert 'loadSources().then(probeCapabilities)' in script
@@ -280,7 +280,7 @@ def test_source_paths_refresh_after_inflight_source_list_changes(stale_failure: 
     assert node is not None, "Node is required for the source-path concurrency check"
     script = r"""
 const fs=require("fs"),vm=require("vm"),assert=require("assert/strict");
-const document={readyState:"loading",addEventListener(){}},window={};
+const document={readyState:"loading",addEventListener(){},getElementById(){return null;}},window={};
 let code=fs.readFileSync("src/photo_search/web/app.js","utf8");
 code=code.replace('  if (document.readyState === "loading")',
   '  globalThis.ui={state,loadSources,loadSourcePaths,setRequest(fn){request=fn;},setElements(value){els=value;renderSources=function(){};renderSourceOptions=function(){};updateGlobalRefreshActions=function(){};updateSearchScopeAction=function(){};}};\n  if (document.readyState === "loading")');
@@ -1153,3 +1153,110 @@ def test_the_search_page_distinguishes_an_empty_page_from_an_unextracted_library
     assert "拍摄时间范围不被接受：只支持 YYYY-MM-DD 或 YYYY-MM-DDTHH:MM:SS[.毫秒] 的墙上时间写法" in script
     for state in ("PENDING", "PARTIAL", "READY", "NO_CAPTURE_TIME"):
         assert state + ":" in script, state
+
+def test_source_detail_requests_keep_current_consumers_and_scope_cache() -> None:
+    node = shutil.which("node")
+    assert node is not None
+    script = r"""
+const fs = require("fs"), vm = require("vm"), assert = require("assert/strict");
+const document = {readyState: "loading", addEventListener() {}};
+const window = {AbortController};
+let code = fs.readFileSync("src/photo_search/web/app.js", "utf8");
+code = code.replace('  if (document.readyState === "loading")',
+  '  globalThis.ui = {state, loadSourceDetail, releaseSourceDetail, reconcileSourceDetails, ' +
+  'pruneSourceDetailConsumers, invalidateSourceDetails, setup(run, render, dom) {' +
+  'request = run; renderSourceDetail = render; element = dom; }};\n  if (document.readyState === "loading")');
+const context = {document, window};
+vm.createContext(context);
+vm.runInContext(code, context);
+const ui = context.ui;
+const requests = [];
+function container() {
+  return {
+    textContent: "", record: null, children: [],
+    appendChild(item) { this.children.push(item); },
+    addEventListener(_event, handler) { this.click = handler; }
+  };
+}
+ui.setup((path, options) => new Promise((resolve, reject) => {
+  requests.push({path, signal: options.signal, resolve, reject});
+}), (_source, payload, target) => { target.record = payload.label; }, container);
+const a = {source_id: 1}, b = {source_id: 2}, c = {source_id: 3};
+ui.state.sources = [a, b];
+const load = (source, target) => ui.loadSourceDetail(source, target, ui.state.sourceDetailGeneration);
+const reply = (index, label) => requests[index].resolve({body: {label}});
+const flush = () => new Promise(setImmediate);
+(async () => {
+  const old = container(), alternate = container(), waiting = container();
+  load(a, old);
+  load(a, old);
+  load(a, alternate);
+  load(b, waiting);
+  assert.equal(requests.length, 1);
+  assert.match(waiting.textContent, /排队/);
+  ui.releaseSourceDetail(a.source_id, old);
+  assert.equal(requests[0].signal.aborted, false);
+
+  const fresh = container(), newWaiting = container();
+  ui.state.sourceDetailGeneration++;
+  load(a, fresh);
+  load(b, newWaiting);
+  ui.pruneSourceDetailConsumers(ui.state.sourceDetailGeneration);
+  assert.equal(requests.length, 1, "rebuilds must reuse the in-flight request");
+  reply(0, "A");
+  await flush();
+  assert.equal(old.record, null);
+  assert.equal(alternate.record, null);
+  assert.equal(fresh.record, "A");
+  assert.equal(requests[1].path, "/sources/2");
+
+  ui.reconcileSourceDetails([a, b, c]);
+  ui.state.sources = [a, b, c];
+  const cached = container();
+  load(a, cached);
+  assert.equal(cached.record, "A", "registering a third source keeps the first cache");
+  assert.equal(requests.length, 2);
+
+  ui.releaseSourceDetail(b.source_id, newWaiting);
+  assert.equal(requests[1].signal.aborted, true);
+  const reopened = container();
+  load(b, reopened);
+  assert.equal(requests.length, 3);
+  reply(1, "stale B");
+  await flush();
+  assert.equal(reopened.record, null);
+  assert.equal(ui.state.sourceDetails["2"], undefined);
+  requests[2].reject({code: "TEMP", message: "temporary"});
+  await flush();
+  assert.match(reopened.textContent, /失败/);
+  reopened.children.at(-1).click();
+  assert.equal(requests.length, 4);
+
+  ui.reconcileSourceDetails([a, c]);
+  ui.state.sources = [a, c];
+  assert.equal(requests[3].signal.aborted, true);
+  reply(3, "removed B");
+  await flush();
+  assert.equal(ui.state.sourceDetails["2"], undefined);
+
+  const cPanel = container();
+  load(c, cPanel);
+  ui.pruneSourceDetailConsumers(++ui.state.sourceDetailGeneration);
+  assert.equal(requests[4].signal.aborted, true);
+  load(c, cPanel);
+  reply(5, "C");
+  reply(4, "obsolete C");
+  await flush();
+  assert.equal(cPanel.record, "C");
+  assert.equal(Object.keys(ui.state.sourceDetailRequests).length, 0);
+
+  ui.reconcileSourceDetails([{source_id: 1, last_successful_scan: 12}, c]);
+  assert.equal(ui.state.sourceDetails["1"], undefined);
+  assert.equal(ui.state.sourceDetails["3"].label, "C");
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        [node, "-e", script], cwd=Path(__file__).resolve().parents[2],
+        capture_output=True, text=True, encoding="utf-8", timeout=10,
+    )
+    assert result.returncode == 0, result.stderr

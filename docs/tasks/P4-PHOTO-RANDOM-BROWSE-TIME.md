@@ -1,6 +1,6 @@
 # P4-PHOTO-RANDOM-BROWSE-TIME — 随机浏览时间来源修正
 
-状态：**IMPLEMENTED / VALIDATION PENDING**（2026-11-26）。定向测试已通过；隔离真实浏览器验收及独立只读复核待完成。详见[执行报告](../reports/P4-PHOTO-RANDOM-BROWSE-TIME.md)。未访问真实图库。
+状态 **SCOPED PASS / USER ACCEPTED**（2026-11-26）。定向测试已通过，用户确认实测通过并豁免独立只读复核。详见[执行报告](../reports/P4-PHOTO-RANDOM-BROWSE-TIME.md)。未访问真实图库。
 
 ## 目标与当前原因
 
