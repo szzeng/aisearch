@@ -2709,7 +2709,8 @@ async def person_operation_retention_preview(request: Request) -> dict[str, Any]
 async def person_operation_retention_cleanup(
     request: Request, payload: PersonOperationRetentionCleanupRequest
 ) -> dict[str, Any]:
-    return persons_of(request).retention_cleanup(
+    return await context_of(request).run_person_write(
+        "retention_cleanup",
         after_operation_revision=payload.after_operation_revision
     )
 
@@ -2777,7 +2778,8 @@ async def post_face_mapping_decisions(
     ``FACE_MAPPING_STALE`` revision pair, ...) instead of a transport-shaped error list.
     """
     body = payload if isinstance(payload, Mapping) else {}
-    return persons_of(request).decide_face_mappings(
+    return await context_of(request).run_person_write(
+        "decide_face_mappings",
         payload=payload,
         contract_version=body.get("contract_version"),
         request_id=body.get("request_id"),
@@ -2919,7 +2921,8 @@ async def person_collection_photos(
 async def post_person_visibility(
     request: Request, payload: PersonVisibilityRequest
 ) -> dict[str, Any]:
-    return persons_of(request).set_visibility(
+    return await context_of(request).run_person_write(
+        "set_visibility",
         person_ids=payload.person_ids, hidden=bool(payload.hidden), ignore_state=payload.ignore_state
     )
 
@@ -3174,7 +3177,8 @@ async def post_face_detail(request: Request, asset_id: int) -> dict[str, Any]:
 async def put_person_label(
     request: Request, person_id: int, payload: PersonNameRequest
 ) -> dict[str, Any]:
-    return persons_of(request).rename(
+    return await context_of(request).run_person_write(
+        "rename",
         person_id=person_id,
         name=payload.name,
         request_id=payload.request_id,
@@ -3202,7 +3206,8 @@ async def put_person_name(
     request: Request, person_id: int, payload: PersonNameRequest
 ) -> dict[str, Any]:
     """The single naming entry point: rename, same-name merge, never a second person."""
-    return persons_of(request).rename(
+    return await context_of(request).run_person_write(
+        "rename",
         person_id=int(person_id),
         name=payload.name,
         request_id=payload.request_id,
@@ -3218,7 +3223,8 @@ async def put_person_name(
 async def post_person_merge(
     request: Request, payload: PersonMergeRequest
 ) -> dict[str, Any]:
-    return persons_of(request).merge(
+    return await context_of(request).run_person_write(
+        "merge",
         target_person_id=int(payload.target_person_id),
         target_expected_revision=int(payload.target_expected_revision),
         sources=[
@@ -3246,7 +3252,8 @@ async def post_person_split(
     catalog byte-identical: the server validates every selected face, every revision and the
     remaining members before it writes the operation row or creates the new person.
     """
-    return persons_of(request).split(
+    return await context_of(request).run_person_write(
+        "split",
         source_person_id=int(source_person_id),
         contract_version=payload.contract_version,
         source_expected_revision=int(payload.source_expected_revision),
@@ -3281,7 +3288,8 @@ async def undo_person_operation(
     bundle item or a ``FACE_CONTROL`` item - and both branches carry the same frozen
     ``operation_id``/``status``/``changed``/``catalog_filter_revision`` envelope.
     """
-    return persons_of(request).undo(
+    return await context_of(request).run_person_write(
+        "undo",
         operation_id=str(operation_id),
         request_id=payload.request_id,
         expected_operation_revision=int(payload.expected_operation_revision),
@@ -3306,7 +3314,8 @@ async def get_face_assignment(request: Request, face_id: str) -> dict[str, Any]:
 async def put_face_assignment(
     request: Request, face_id: str, payload: FaceCorrectionRequest
 ) -> dict[str, Any]:
-    return persons_of(request).set_face_assignment(
+    return await context_of(request).run_person_write(
+        "set_face_assignment",
         face_id=str(face_id),
         contract_version=payload.contract_version,
         action=payload.action,
@@ -3324,7 +3333,8 @@ async def put_face_assignment(
 async def post_create_person_from_face(
     request: Request, face_id: str, payload: CreatePersonFromFaceRequest
 ) -> dict[str, Any]:
-    return persons_of(request).create_person_from_face(
+    return await context_of(request).run_person_write(
+        "create_person_from_face",
         face_id=str(face_id),
         contract_version=payload.contract_version,
         request_id=payload.request_id,
@@ -3340,7 +3350,8 @@ async def post_create_person_from_face(
 async def post_face_assignment_batch(
     request: Request, payload: FaceCorrectionBatchRequest
 ) -> dict[str, Any]:
-    return persons_of(request).edit_face_assignments(
+    return await context_of(request).run_person_write(
+        "edit_face_assignments",
         items=[
             {
                 "face_id": item.face_id,
@@ -3358,7 +3369,8 @@ async def post_face_assignment_batch(
 @router.post("/persons/{person_id}/regroup", response_model=FaceRegroupResponse,
              summary="Remove and safely regroup only explicitly selected faces")
 async def post_face_regroup(request: Request, person_id: int, payload: FaceRegroupRequest) -> dict[str, Any]:
-    return persons_of(request).regroup_faces(
+    return await context_of(request).run_person_write(
+        "regroup_faces",
         source_person_id=person_id, **payload.model_dump(),
     )
 

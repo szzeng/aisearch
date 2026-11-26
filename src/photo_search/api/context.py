@@ -21,6 +21,11 @@ from typing import Any
 from photo_search.api.catalog_reads import SourceDetailReads
 from photo_search.api.errors import Redactor
 from photo_search.api.face_detail_runner import FaceDetailRunner
+from photo_search.api.person_writes import (
+    PERSON_WRITE_CLOSE_GRACE_SECONDS,
+    PersonWriteWorker,
+    person_write_busy,
+)
 from photo_search.api.refresher import LibraryRefresher
 from photo_search.api.runner import ScanRunner
 from photo_search.api.session import SessionManager
@@ -60,6 +65,7 @@ class ApiContext:
             token, token_source="settings" if settings.session_token else "generated"
         )
         self._service_factory = service_factory or self._default_service_factory
+        self._person_write_worker: PersonWriteWorker | None = PersonWriteWorker(self._service_factory)
         self._runner_executor = runner_executor
         self._worker_id = worker_id
         #: P2-06A: search sessions are process-local by design (architecture §9.5). A
@@ -231,6 +237,18 @@ class ApiContext:
             return dict(value)
 
     # ------------------------------------------------------------------ resources
+    async def run_person_write(self, operation: str, **parameters: Any) -> dict[str, Any]:
+        with self._lifecycle_lock:
+            if self._closed or self._person_write_worker is None:
+                raise person_write_busy()
+            result = self._person_write_worker.submit(operation, **parameters)
+        return await asyncio.wrap_future(result)
+
+    async def drain_person_writes(self) -> None:
+        """Give the writer an asynchronous grace period before regular shutdown takes over."""
+        if (worker := self._person_write_worker) is not None and (thread := worker.stop()) is not None:
+            await asyncio.to_thread(thread.join, PERSON_WRITE_CLOSE_GRACE_SECONDS)
+
     def service(self) -> CatalogService:
         """The catalog service of the request-handling thread (opened once)."""
         if self._service is None:
@@ -573,7 +591,7 @@ class ApiContext:
             self._reranker_resolved = True
             return self._reranker
 
-    def close(self) -> bool:
+    def close(self, *, person_write_timeout: float = PERSON_WRITE_CLOSE_GRACE_SECONDS) -> bool:
         """Request shutdown; return false while a worker still owns resources."""
         try:
             shutdown_loop = asyncio.get_running_loop()
@@ -599,6 +617,7 @@ class ApiContext:
             return False
         self.source_detail_reads.close()
         workers = (
+            ("_person_write_worker", self._person_write_worker),
             ("_memories_runner", self._memories_runner),
             ("_embedding_candidate_manager", self._embedding_candidate_manager),
             ("_refresher", self._refresher),
@@ -613,7 +632,10 @@ class ApiContext:
             if worker is None:
                 continue
             try:
-                released = worker.close()
+                if attribute == "_person_write_worker":
+                    released = worker.close(timeout=person_write_timeout)
+                else:
+                    released = worker.close()
             except Exception:  # noqa: BLE001 - one failure must not skip other workers
                 logger.exception("stopping %s failed", attribute)
                 released = False

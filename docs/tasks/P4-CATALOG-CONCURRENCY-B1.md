@@ -1,7 +1,7 @@
 # P4-CATALOG-CONCURRENCY-B1 — 人物写操作线程隔离
 
-状态：**PLANNED / NOT STARTED**。个人项目简化任务。
-实施基线：`b4f826e579b0e731bab064f7be0ee50dd0768b1c`（2026-11-27）。
+状态：**SCOPED PASS / TERRA HIGH REVIEW PASS**。个人项目简化任务。
+实施基线：`ec6a8d1`（2026-11-27）。[执行报告](../reports/P4-CATALOG-CONCURRENCY-B1.md)。
 
 父任务：[P4-CATALOG-CONCURRENCY-STABILITY](P4-CATALOG-CONCURRENCY-STABILITY.md)。
 工作包 B：[P4-FOREGROUND-WRITE-FAIRNESS-A](P4-FOREGROUND-WRITE-FAIRNESS-A.md)。
@@ -18,6 +18,14 @@
 
 现有 `ApiContext._service_factory`、`ScanRunner` 等后台 Worker 已提供线程自有 `CatalogService` / SQLite connection 的模式。本卡优先复用，不跨线程传递 request Catalog。
 
+参照主架构 V3.0 §8.3.1–8.3.4、§12.2，执行策略 V3.1 §2.4、§3.2、§3.4。
+
+## 性能设计与验收
+
+- 链路与风险（PERF-BOUNDED）：现有 SQLite writer 等待阻塞人物写请求所在的 API event loop，健康检查也无法推进。
+- 做法与边界：一个专用线程，最多一个执行、四个等候，满队列在接受前拒绝。SQL、业务批次上限和事务保持原样，沿用本卡的争用时独立响应要求。
+- 验证与停止：受控 writer 持锁时，用真实 ASGI 路由验证健康请求先完成、人物请求仍等待；锁释放后核对提交、幂等和清理。定向 B/D 回归收口，不新增容量或发行承诺。
+
 ## 实施范围
 
 ### 1. 迁移用户触发的人物写入口
@@ -29,7 +37,7 @@
 - 单个及批量人脸关联修正；
 - 从人脸创建人物；
 - 人脸 regroup；
-- 人脸映射决策。
+- 人脸映射决策、用户手动触发的历史人物操作快照清理。
 
 只读详情、浏览、映射查询不迁移。内部 retention cleanup 等后台维护操作不纳入本卡。
 
@@ -75,6 +83,10 @@
 - 不增加数据库表、索引、Schema 迁移或全局互斥锁。
 - 不访问真实图库/照片，不下载模型，不构建 Windows EXE。
 
-完成后更新本卡、工作包 B、专项父卡及 `docs/development-status.md`，附简短测试结果。未执行的验证不得标记 PASS。
+## 实施结果（2026-11-27）
 
-**本卡仅为实施任务定义，不代表已经修改产品代码。**
+- 迁移 12 个用户写路由，覆盖 11 种白名单操作。人物 Worker 使用独立 Catalog，执行、回滚及关闭均在所属线程。队列上限为 1 个执行和 4 个等候，超限返回可重试的 `503 PERSON_WRITE_BUSY`。
+- 旧同步路由对照中，健康响应晚于持锁线程的 6 秒保护释放。改后同一合成卡点在锁释放前返回健康和人物详情，锁释放后改名成功且重放只留下一个业务操作。关停时已接受写入排空，等待方取消后写入仍提交。连接首次关闭失败后在原线程重试，成功关闭且 Worker 退出后可重新取得数据根租约。
+- 独立 Terra High 首轮发现一项 P2。修复为人物写关闭宽限 5 秒，超时后进入既有延迟清理。非守护 Worker 在事件循环退出后继续完成已接受的写入并保有租约，永久故障会使进程保持存活。实测覆盖宽限内、超时接管及独立子进程退出。独立复审通过，无新增 P0/P1/P2，复跑 34 项通过。
+- 定向 B/D JUnit 225 项通过，零失败、零跳过，两组退出码均为 0。包含 A0 7 场景和三项 A1 读取回归。Ruff、compileall、diff-check 通过。共享 Catalog 锁序、通用延迟清理及 ADR 事务实现保持原有行为。
+- B2 仍为条件任务。此次验证使用受控的单个写锁，尚无持续后台写锁饥饿的实测证据。数据均为隔离合成数据。

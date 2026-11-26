@@ -1,6 +1,6 @@
 # P4-CATALOG-CONCURRENCY-STABILITY — 数据库并发与前台响应稳定性专项
 
-建卡日期：2026-11-26。状态 **A0 SCOPED PASS / A1 IMPLEMENTED · VALIDATION PENDING / B1 PLANNED / B2 CONDITIONAL**。当前规划基线：GitHub `master`，`b4f826e579b0e731bab064f7be0ee50dd0768b1c`。
+建卡日期：2026-11-26。状态 **A0 SCOPED PASS / A1 IMPLEMENTED · VALIDATION PENDING / B1 SCOPED PASS / B2 CONDITIONAL**。当前规划基线：GitHub `master`，`b4f826e579b0e731bab064f7be0ee50dd0768b1c`。
 
 本卡是专项父任务，只负责统一问题边界、诊断方案、执行顺序和联合验收。产品改动分别由工作包 A、B 承担。初始规划提交仅建立和关联任务文档。A0 的运行证据记录于下。
 
@@ -21,7 +21,7 @@ A0 是用户单独授权的 P0。用户指定 Terra High 替代 A0 默认 DS-H�
 | 工作包 | 任务卡 | 负责问题 | 状态 |
 |---|---|---|---|
 | A | [P4-SOURCE-DETAIL-STABILITY](P4-SOURCE-DETAIL-STABILITY.md) | 查询池锁序、图库明细读取卡顿、重复请求和 Worker 排队 | A0 SCOPED PASS。A1 IMPLEMENTED / VALIDATION PENDING |
-| B | [P4-FOREGROUND-WRITE-FAIRNESS-A](P4-FOREGROUND-WRITE-FAIRNESS-A.md) | 前台人物写入与后台建库并发治理 | B1 PLANNED；B2 CONDITIONAL（仅在 B1 后仍实测写锁饥饿时实施） |
+| B | [P4-FOREGROUND-WRITE-FAIRNESS-A](P4-FOREGROUND-WRITE-FAIRNESS-A.md) | 前台人物写入与后台建库并发治理 | B1 SCOPED PASS / TERRA HIGH REVIEW PASS，受影响 JUnit 225/225。B2 CONDITIONAL（仅在 B1 后仍实测写锁饥饿时实施）。[B1 报告](../reports/P4-CATALOG-CONCURRENCY-B1.md) |
 
 两个问题共享“后台工作不能拖垮前台响应”的产品目标，但不能混成一把数据库锁：
 

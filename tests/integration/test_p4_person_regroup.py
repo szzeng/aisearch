@@ -275,12 +275,9 @@ def test_undo_restores_faces_and_refuses_later_manual_changes(env):
     assert list(h.catalog.connection.iterdump()) == before
 
 
-def test_regroup_api_uses_session_csrf_and_private_response(api_env, env, monkeypatch):
-    from photo_search.api import routes
-
+def test_regroup_api_uses_session_csrf_and_private_response(api_env, env):
     h = env
     source, faces = setup(h)
-    monkeypatch.setattr(routes, "persons_of", lambda request: h.service)
     body = payload(h, source, faces)
     del body["source_person_id"]
     path = f"/api/v1/persons/{source}/regroup"

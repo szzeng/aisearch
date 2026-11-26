@@ -1,6 +1,6 @@
 # P4-FOREGROUND-WRITE-FAIRNESS-A — 前台写入与后台建库并发治理（工作包 B）
 
-状态：**B1 PLANNED / B2 CONDITIONAL**。个人项目简化规划。
+状态：**B1 SCOPED PASS / B2 CONDITIONAL**。个人项目简化规划。
 当前规划基线：`b4f826e579b0e731bab064f7be0ee50dd0768b1c`（2026-11-27）。
 
 父任务：[P4-CATALOG-CONCURRENCY-STABILITY](P4-CATALOG-CONCURRENCY-STABILITY.md)。
@@ -19,6 +19,8 @@
 目标：把用户触发的 PersonService 写操作移出 API event loop，使用一个专用单写 Worker 和线程自有 Catalog/SQLite connection。保留人物操作事务、幂等、undo、revision 和响应格式。
 
 验收只做独立合成图库的少量关键测试：后台/测试连接持有 SQLite writer 时，人物写请求等待但健康接口仍响应；释放锁后人物修改成功；连接线程归属正确；应用关闭后无遗留 Worker/connection/lease。
+
+B1 已通过上述合成验收。独立 Terra High 复审通过。人物操作、生命周期及 A0/A1 回归 JUnit 共 225 项通过。见[执行报告](../reports/P4-CATALOG-CONCURRENCY-B1.md)。
 
 B1 不改变后台扫描、语义、人脸、OCR 的写入调度。
 

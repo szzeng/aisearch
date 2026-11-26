@@ -1,6 +1,6 @@
-## Next planned task: P4-CATALOG-CONCURRENCY-B1（2026-11-27）
+## Previous task: P4-CATALOG-CONCURRENCY-B1（2026-11-27）
 
-**PLANNED / NOT STARTED**：人物写操作线程隔离。用一个专用单写 Worker，把用户触发的同步 PersonService 写操作移出 API event loop；Worker 使用线程自有 Catalog/SQLite connection。少量合成图库测试覆盖：SQLite writer 等待时健康接口仍响应、释放锁后改名成功、request_id 重放、Worker 关闭与 lease 清理。B2 后台让步仅在 B1 后仍能复现明显写锁饥饿时才实施。详见[任务卡](tasks/P4-CATALOG-CONCURRENCY-B1.md)和[工作包 B](tasks/P4-FOREGROUND-WRITE-FAIRNESS-A.md)。
+**SCOPED PASS / TERRA HIGH REVIEW PASS**。12 个人物写路由迁入专用单写 Worker。合成库验证持锁时健康与人物详情仍响应、改名重放、满队列 503 和关闭清理。独立首轮 P2 已修复为 5 秒宽限后延迟清理，独立复跑 34/34，复审通过。定向 JUnit 225/225，Ruff、compileall、diff-check 通过。B2 仍以实测持续写锁饥饿为启动条件。[任务卡](tasks/P4-CATALOG-CONCURRENCY-B1.md) · [执行报告](reports/P4-CATALOG-CONCURRENCY-B1.md)
 
 ## Current task: P4-CATALOG-CONCURRENCY-A1（2026-11-27）
 
@@ -24,7 +24,7 @@
 
 ## 父专项 P4-CATALOG-CONCURRENCY-STABILITY（2026-11-27）
 
-**A0 已通过，A1 简单验收待收口，B1 已规划，B2 条件实施**。数据库并发与前台响应稳定性专项，统一诊断、分开实施、联合验收。工作包 A [P4-SOURCE-DETAIL-STABILITY](tasks/P4-SOURCE-DETAIL-STABILITY.md)：图库明细请求去重/缓存、未建库空 scope 快速路径、只读 Worker 与 SQL 诊断。工作包 B [P4-FOREGROUND-WRITE-FAIRNESS-A](tasks/P4-FOREGROUND-WRITE-FAIRNESS-A.md)：人物写操作线程隔离、前台写意图、后台安全批次让步及任务恢复。父任务：[P4-CATALOG-CONCURRENCY-STABILITY](tasks/P4-CATALOG-CONCURRENCY-STABILITY.md)。执行顺序为共享诊断 → A → B → 联合并发回归；两工作包不并行修改共享调度基础设施。A1 的启动门槛已由用户确认收口。
+**A0、B1 已通过各自限定范围验收，A1 简单验收待收口，B2 条件实施**。数据库并发与前台响应稳定性专项，统一诊断、分开实施、联合验收。工作包 A [P4-SOURCE-DETAIL-STABILITY](tasks/P4-SOURCE-DETAIL-STABILITY.md)：图库明细请求去重/缓存、未建库空 scope 快速路径、只读 Worker 与 SQL 诊断。工作包 B [P4-FOREGROUND-WRITE-FAIRNESS-A](tasks/P4-FOREGROUND-WRITE-FAIRNESS-A.md)：人物写操作线程隔离、前台写意图、后台安全批次让步及任务恢复。父任务：[P4-CATALOG-CONCURRENCY-STABILITY](tasks/P4-CATALOG-CONCURRENCY-STABILITY.md)。执行顺序为共享诊断 → A → B → 联合并发回归；两工作包不并行修改共享调度基础设施。A1 的启动门槛已由用户确认收口。
 
 
 ## Previous task: P4-ORPHAN-ASSET-CLEANUP-FIX（2026-11-19）
