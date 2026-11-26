@@ -1,6 +1,6 @@
 ## Current task: P4-MEDIA-ARW-WEBP-A（2026-11-26）
 
-**IMPLEMENTED / VALIDATION PENDING**：ARW 接入共享 RAW、人脸/OCR、语义输入、原始 EXIF/GPS 和限定历史恢复；三张公开横拍样片源码通过，隔离建库复建零解码。最终受影响 JUnit **319 passed / 4 skipped**（缺 OCR 权重）；本机冻结程序隔离 ARW/WebP JPEG smoke 通过。真实竖拍/GPS、真实模型、完整故障矩阵和独立 DS-H 审查 PENDING。媒体一次性限制仅在失败缓存保留期间有效。详见[任务卡](tasks/P4-MEDIA-ARW-WEBP-A.md)和[报告](reports/P4-MEDIA-ARW-WEBP-A.md)。未访问真实图库或提交推送。
+**IMPLEMENTED / VALIDATION PENDING**：ARW 接入共享 RAW、人脸/OCR、语义输入、原始 EXIF/GPS 和限定历史恢复；三张公开横拍样片源码通过，隔离建库复建零解码。最终受影响 JUnit **319 passed / 4 skipped**（缺 OCR 权重）；本机冻结程序隔离 ARW/WebP JPEG smoke 通过。真实竖拍/GPS、真实模型、完整故障矩阵和独立 DS-H 审查 PENDING。媒体一次性限制仅在失败缓存保留期间有效。详见[任务卡](tasks/P4-MEDIA-ARW-WEBP-A.md)和[报告](reports/P4-MEDIA-ARW-WEBP-A.md)。未访问真实图库。
 
 ## Current task: P4-PLACE-CN-AUTO（2026-11-26）
 
@@ -9,6 +9,11 @@
 ## Current task: P4-PHOTO-RANDOM-BROWSE-TIME（2026-11-26）
 
 **IMPLEMENTED / VALIDATION PENDING**：随机页按可信拍摄时间、受控文件创建时间、未知的顺序显示，普通列表保留加入时间；每页批量读取时间，仅对缺失者查受控位置。定向 JUnit 22/22；隔离真实浏览器检查与独立只读复核仍 PENDING，未访问真实图库。详见[任务卡](tasks/P4-PHOTO-RANDOM-BROWSE-TIME.md)和[报告](reports/P4-PHOTO-RANDOM-BROWSE-TIME.md)。
+
+## Next planned专项：P4-CATALOG-CONCURRENCY-STABILITY（2026-11-26）
+
+**PLANNED / NOT STARTED**：数据库并发与前台响应稳定性专项，统一诊断、分开实施、联合验收。工作包 A [P4-SOURCE-DETAIL-STABILITY](tasks/P4-SOURCE-DETAIL-STABILITY.md)：图库明细请求去重/缓存、未建库空 scope 快速路径、只读 Worker 与 SQL 诊断。工作包 B [P4-FOREGROUND-WRITE-FAIRNESS-A](tasks/P4-FOREGROUND-WRITE-FAIRNESS-A.md)：人物写操作线程隔离、前台写意图、后台安全批次让步及任务恢复。父任务：[P4-CATALOG-CONCURRENCY-STABILITY](tasks/P4-CATALOG-CONCURRENCY-STABILITY.md)。执行顺序为共享诊断 → A → B → 联合并发回归；两工作包不并行修改共享调度基础设施。本次仅提交任务规划文档，未修改产品代码、未运行测试。启动前须完成当前 P4-PHOTO-RANDOM-BROWSE-TIME 剩余验收及 P4-ORPHAN-ASSET-CLEANUP-FIX 尚未完成的浏览器验收。
+
 
 ## Previous task: P4-ORPHAN-ASSET-CLEANUP-FIX（2026-11-19）
 
