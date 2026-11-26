@@ -1,3 +1,7 @@
+## Current task: P4-CATALOG-CONCURRENCY-A0（2026-11-26）
+
+**A0 SCOPED PASS / TERRA HIGH REVIEW PASS**。合成子进程复现 `_lock` 与 `_activity` 双向互等，修改为锁外注册 Future 完成回调。复现前 1 个目标失败、4 个阴性对照通过，修复后 7 个新增场景及最终受影响 JUnit 328/328 通过。取消/关闭、Memories 和数据根 lease 回归通过。 Ruff、compileall 和 diff-check 通过。用户指定的独立 Terra High 完整受影响面审核通过，独立重跑 7/7，无 P0/P1/P2 发现。未提交、未推送。详见[工作包 A 任务卡](tasks/P4-SOURCE-DETAIL-STABILITY.md#a0--查询池锁序p0)和[诊断报告](reports/P4-CATALOG-CONCURRENCY-DIAGNOSTIC.md#a0-后续验证--查询池锁序死锁)。
+
 ## Current task: P4-MEDIA-ARW-WEBP-A（2026-11-26）
 
 **IMPLEMENTED / VALIDATION PENDING**：ARW 接入共享 RAW、人脸/OCR、语义输入、原始 EXIF/GPS 和限定历史恢复；三张公开横拍样片源码通过，隔离建库复建零解码。最终受影响 JUnit **319 passed / 4 skipped**（缺 OCR 权重）；本机冻结程序隔离 ARW/WebP JPEG smoke 通过。真实竖拍/GPS、真实模型、完整故障矩阵和独立 DS-H 审查 PENDING。媒体一次性限制仅在失败缓存保留期间有效。详见[任务卡](tasks/P4-MEDIA-ARW-WEBP-A.md)和[报告](reports/P4-MEDIA-ARW-WEBP-A.md)。未访问真实图库。
@@ -12,7 +16,7 @@
 
 ## Next planned专项：P4-CATALOG-CONCURRENCY-STABILITY（2026-11-26）
 
-**PLANNED / NOT STARTED**：数据库并发与前台响应稳定性专项，统一诊断、分开实施、联合验收。工作包 A [P4-SOURCE-DETAIL-STABILITY](tasks/P4-SOURCE-DETAIL-STABILITY.md)：图库明细请求去重/缓存、未建库空 scope 快速路径、只读 Worker 与 SQL 诊断。工作包 B [P4-FOREGROUND-WRITE-FAIRNESS-A](tasks/P4-FOREGROUND-WRITE-FAIRNESS-A.md)：人物写操作线程隔离、前台写意图、后台安全批次让步及任务恢复。父任务：[P4-CATALOG-CONCURRENCY-STABILITY](tasks/P4-CATALOG-CONCURRENCY-STABILITY.md)。执行顺序为共享诊断 → A → B → 联合并发回归；两工作包不并行修改共享调度基础设施。本次仅提交任务规划文档，未修改产品代码、未运行测试。启动前须完成当前 P4-PHOTO-RANDOM-BROWSE-TIME 剩余验收及 P4-ORPHAN-ASSET-CLEANUP-FIX 尚未完成的浏览器验收。
+**A0 之外 PLANNED / NOT STARTED**：数据库并发与前台响应稳定性专项，统一诊断、分开实施、联合验收。工作包 A [P4-SOURCE-DETAIL-STABILITY](tasks/P4-SOURCE-DETAIL-STABILITY.md)：图库明细请求去重/缓存、未建库空 scope 快速路径、只读 Worker 与 SQL 诊断。工作包 B [P4-FOREGROUND-WRITE-FAIRNESS-A](tasks/P4-FOREGROUND-WRITE-FAIRNESS-A.md)：人物写操作线程隔离、前台写意图、后台安全批次让步及任务恢复。父任务：[P4-CATALOG-CONCURRENCY-STABILITY](tasks/P4-CATALOG-CONCURRENCY-STABILITY.md)。执行顺序为共享诊断 → A → B → 联合并发回归；两工作包不并行修改共享调度基础设施。其余工作启动前须完成当前 P4-PHOTO-RANDOM-BROWSE-TIME 剩余验收及 P4-ORPHAN-ASSET-CLEANUP-FIX 尚未完成的浏览器验收。
 
 
 ## Previous task: P4-ORPHAN-ASSET-CLEANUP-FIX（2026-11-19）

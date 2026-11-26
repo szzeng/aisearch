@@ -233,3 +233,76 @@ A 的读 admission 与 B 的写意图各自计量。两包共用关联 ID、时�
 - 浏览器单飞频率、跨页面/直接端点并发、断连到 Worker 释放时长、空域 SQL 计划，以及多个阶段叠加的响应性等待验证。
 - 真实模型、目标 GPU/机械硬盘、冻结 EXE 及真实图库全部在本轮范围外。现有 A2 硬件待验项继续沿用原报告。
 - 本轮未产生新测试、JUnit、浏览器或运行时证据。P4-PHOTO-RANDOM-BROWSE-TIME 的浏览器/独立复核和 P4-ORPHAN-ASSET-CLEANUP-FIX 浏览器验收仍按状态页处理。A、B 及父卡没有状态变更，报告可作为阶段 0 的输入。
+
+## A0 后续验证 · 查询池锁序死锁
+
+2026-11-26 · 基线 `6f0bc84c6ce09948ee330809cc38fb7d77fabd0f` · Python 3.12.10 · 独立合成子进程
+
+### 修复前的运行证据
+
+在改动产品代码前运行新增回归的首轮五个节点。只有「已完成 Future 与空闲等待者重叠」失败，四组阴性对照通过。父 pytest 退出 1，子进程的 faulthandler watchdog 在 6 秒时采集栈并退出。主进程另设 20 秒硬期限。进程使用实际 `_CatalogWorkers`、RLock、Condition 和 `ThreadPoolExecutor` Future，只用 Event 控制任务边界，未打开 SQLite。
+
+1. `catalog-submit` 持 `_lock` 提交任务。受控 Executor 让真实 worker 完成 Future，返回后把它登记到 `_requests`，在回调注册处等待 Event。
+2. `foreground-idle` 经 Memories 同用的 `wait_foreground_idle` 入口拿到 `_activity`。代理在持有它的期间试取真实 RLock，记录 `activity_owned=True pool_lock_busy=True`，然后进入阻塞获取。
+3. 控制线程释放回调注册闸门。注册时记录 `done=True pool_lock_owned=True`。CPython 同步在 `catalog-submit` 执行 `_finished`。回调释放自己重入的 RLock 层后，`submit` 的外层 RLock 仍在。该线程阻塞于获取 `_activity`。
+4. watchdog 的两条栈与所有权记录闭合等待环。此合成复现确认 Python 线程死锁；第 1 节对用户事故的归因仍待现场证据。
+
+```text
+foreground-idle（持有 _activity，等待 _lock）
+  test_catalog_worker_lock_order.py:68  ObservedPoolLock.__enter__
+  api/catalog_reads.py:121              _CatalogWorkers.wait_foreground_idle
+  api/catalog_reads.py:224              wait_foreground_idle
+
+catalog-submit（持有 _lock，等待 _activity）
+  threading.py:300                     Condition.__enter__
+  api/catalog_reads.py:110              _CatalogWorkers._finished
+  test_catalog_worker_lock_order.py:44  observe_completion
+  concurrent/futures/_base.py:424       Future.add_done_callback
+  test_catalog_worker_lock_order.py:46  observe_registration
+  api/catalog_reads.py:102              _CatalogWorkers.submit
+```
+
+堆栈行号取首轮实际运行。原始 stdout、完整栈和 pytest 退出保存在 `test-results/p4-catalog-concurrency-a0/before.xml` 和 `before.exit`。四组阴性对照是注册时未完成、无等待者、等待者在提交完成后才取 Condition、正常 worker 异步完成。
+
+### 最小修复与竞态检查
+
+仅把 `src/photo_search/api/catalog_reads.py::_CatalogWorkers.submit` 的 `future.add_done_callback(self._finished)` 移到 `_lock` 外。提交与登记仍一起在 `_lock` 内完成，`_finished` 在自身 `_lock` 下幂等移除 Future，释放后再取 `_activity` 通知。修复后 `wait_foreground_idle` 的 `_activity` → `_lock` 仍存在，池提交、完成和关闭均不会持池锁等待 Condition。worker 数、连接线程所有权、busy_timeout、取消与数据根 lease 所有权沿用现有实现。
+
+| 交错 | 状态与验证点 |
+| --- | --- |
+| Future 在持锁提交时已经完成 | 在锁外注册仍同步回调。相同交错下，空闲等待者能检查集合，回调移除条目，两线程都退出。 |
+| Future 在释放锁后、回调注册前完成 | 已被登记且可见为活动，晚注册的回调读取已完成 Future 并同步清理，无遗漏。 |
+| Future 在回调注册后正常完成 | worker 执行回调一次，等待者先看到活动，再获唤醒。 |
+| close 先于 callback 注册取消排队 Future | close 仍能见到已登记项并设置请求取消。用两条真实 executor 线程占满容量，关闭期间取消第三条队列项。待关闭完成后允许注册，回调同步移除条目。重复 close 后计数仍为零。 |
+| close、取消交错与活动 SQL | 现有 close 先取 pending 快照，随后在池锁外取消并等待 executor。取消竞态由 Future 终态与幂等 pop 收敛。活动查询/投影的 interrupt、连接关闭、回滚、隔离 owner 和 lease 由既有 D 级回归核对。 |
+
+### 回归结果与复跑
+
+| 检查 | 实际结果 |
+| --- | --- |
+| 修复前锁序试验 `before.xml` | 4 passed / 1 failed，退出 1。失败为已记录两个线程互等的目标节点。 |
+| 修复后锁序试验 `after.xml` | 7 passed，退出 0。原交错、四组阴性对照、释放锁后 Future 完成、关闭先取消队列项均通过。 |
+| 最终受影响集 `affected-final.xml` | 32 文件，328 passed / 0 failed / 0 skipped，退出 0（153.129 s）。包括锁序 7、查询池读/中断 6、Worker 生命周期 15、Memories 单元与 API 25，其余为实际调用者。 |
+| 静态检查 | `uv run --offline --no-sync ruff check .`、`python -m compileall -q src/photo_search tests`、`git diff --check` 均退出 0。 |
+
+最终集覆盖 close 停收/关闭隔离 owner、queued/running read 取消、投影中断回滚、连接关闭、lifespan 数据根 lease 保留与释放，及实际 Memories 等待读任务退出后恢复。直接调用者包括来源/照片/时间轴、OCR、地图/地点、人物与合集、收藏、搜索/图片查询和投影追赶。公共变化界定在回调注册，未触发全量套件。首轮使用 pytest 启动器时有四个测试文件因项目根的 `tools` 未在导入路径而收集失败（`affected.xml`、退出 2）。使用 `python -m pytest` 原集合重跑，四个文件均执行，未改测试范围。
+
+```powershell
+$env:UV_CACHE_DIR = (Join-Path (Get-Location) '.uv-cache')
+$evidence = 'test-results/p4-catalog-concurrency-a0'
+uv run --offline --no-sync python -m pytest -q tests/unit/test_catalog_worker_lock_order.py --basetemp=.pytest-tmp/a0-order-rerun --junitxml="$evidence/order-rerun.xml" -o junit_logging=all
+$selectedTests = @(Get-Content -LiteralPath "$evidence/affected-files.txt")
+uv run --offline --no-sync python -m pytest -q @selectedTests --basetemp=.pytest-tmp/a0-affected-rerun --junitxml="$evidence/affected-rerun.xml" -o junit_logging=all
+```
+
+工作区的 `affected-files.txt` 保留 32 文件清单，`*.exit` 保留实际退出。修复前试验的五个原节点已保留原始 JUnit。复查旧锁序时，可在项目临时目录用基线源码与当前测试脚本的子进程模式运行 `completed-with-waiter`，其退出和两条栈由脚本 watchdog 采集。当前 pytest 回归还要求已完成 Future 的回调在池锁外运行。
+
+**局部提交耗时。** 用同一个 Python 进程交替载入基线与修改版的 pool，各做三轮无 I/O 热提交，每轮丢弃前 200 次，再计 2,000 次。仅测从 `submit` 进入到返回。基线各轮中位数为 10.3、9.9、9.9 µs，修改版为 9.9、12.4、9.9 µs。局部观察中未见一致性额外开销。没有新增临界区、常驻线程或等待轮次。探针与原始结果在 `submit-probe.py` 和 `submit-probe.json`。这些数值只描述本机无 I/O 提交，不作 API 延迟或压力容量承诺。
+
+### 状态与独立审查
+
+**A0 SCOPED PASS / TERRA HIGH REVIEW PASS**。合成互等已复现，同序修复与受影响回归已通过。用户事故的实际归因、真实图库背景负载和 A 余项、B 均未验证。现有工作区只有本次产品修复、受控回归和任务文档，未提交、未推送。
+
+用户指定 Terra High 替代 A0 默认 DS-H，执行完整受影响面独立审查。 按 V3.1 §2.4 的覆盖要求核对改动文件、修复前 watchdog 堆栈、Future 同步与异步回调、submit/close、cancel/finished、Memories 唤醒、读/投影/搜索直接入口、线程连接与数据根 lease。未发现 P0/P1/P2 或未解决的 ADR、租约安全风险。
+
+独立审查重跑 7 个锁序场景，**7/7 通过，退出 0**，证据为 `test-results/p4-catalog-concurrency-a0/terra-review.xml`。审查者核验原 328 项受影响回归 JUnit，并核对无 I/O 局部计时的适用范围。真实图库、事故现场归因、真实模型和硬件、压力容量及 A/B 其余验收仍在本次范围外。

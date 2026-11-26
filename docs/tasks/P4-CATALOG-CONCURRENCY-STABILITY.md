@@ -1,8 +1,14 @@
 # P4-CATALOG-CONCURRENCY-STABILITY — 数据库并发与前台响应稳定性专项
 
-建卡日期：2026-11-26。状态：**PLANNED / NOT STARTED**。实施基线：GitHub `master`，`b334bd75a020108bf826e2790d2850290bf4210a`。
+建卡日期：2026-11-26。状态：**A0 SCOPED PASS，其余 PLANNED**。实施基线：GitHub `master`，`b334bd75a020108bf826e2790d2850290bf4210a`。
 
-本卡是专项父任务，只负责统一问题边界、诊断方案、执行顺序和联合验收。产品改动分别由工作包 A、B 承担。本次提交仅建立/关联任务文档，不代表已经实现、测试或修复。
+本卡是专项父任务，只负责统一问题边界、诊断方案、执行顺序和联合验收。产品改动分别由工作包 A、B 承担。初始规划提交仅建立和关联任务文档。A0 的运行证据记录于下。
+
+## A0 · 查询池锁序复现与修复（2026-11-26）
+
+**A0 SCOPED PASS / TERRA HIGH REVIEW PASS**。合成子进程复现 `_lock` 与 `_activity` 双向互等，修改为锁外注册 Future 完成回调。复现前 1 个目标失败、4 个阴性对照通过，修复后 7 个新增场景及最终受影响 JUnit 328/328 通过。取消/关闭、Memories 和数据根 lease 回归通过。 结果见[诊断报告的 A0 后续验证](../reports/P4-CATALOG-CONCURRENCY-DIAGNOSTIC.md#a0-后续验证--查询池锁序死锁)。
+
+A0 是用户单独授权的 P0。用户指定 Terra High 替代 A0 默认 DS-H，执行完整受影响面独立审查。 独立重跑 7/7，无 P0/P1/P2 发现。A 其余明细、前端生命周期、SQL 诊断工作和 B 尚未启动，原启动门槛继续适用。
 
 ## 0. 任务结构与关系
 
@@ -10,7 +16,7 @@
 
 | 工作包 | 任务卡 | 负责问题 | 状态 |
 |---|---|---|---|
-| A | [P4-SOURCE-DETAIL-STABILITY](P4-SOURCE-DETAIL-STABILITY.md) | 图库任务与统计明细读取卡顿、重复请求和只读 Worker 排队 | PLANNED |
+| A | [P4-SOURCE-DETAIL-STABILITY](P4-SOURCE-DETAIL-STABILITY.md) | 查询池锁序、图库明细读取卡顿、重复请求和 Worker 排队 | A0 SCOPED PASS / TERRA HIGH REVIEW PASS。其余 PLANNED |
 | B | [P4-FOREGROUND-WRITE-FAIRNESS-A](P4-FOREGROUND-WRITE-FAIRNESS-A.md) | 后台建库期间前台人物写入等待、后台连续写入竞争和 API 事件循环阻塞 | PLANNED |
 
 两个问题共享“后台工作不能拖垮前台响应”的产品目标，但不能混成一把数据库锁：

@@ -99,7 +99,9 @@ class _CatalogWorkers:
                 self._run, request, query, args, kwargs, projection, submitted_at,
             )
             self._requests[future] = request
-            future.add_done_callback(self._finished)
+        # A finished Future calls back inline. Register outside the pool lock so
+        # _finished cannot wait for _activity while wait_foreground_idle needs _lock.
+        future.add_done_callback(self._finished)
         with self._activity:
             self._activity.notify_all()
         return future, request
