@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from photo_search.artifacts.store import ArtifactStore
+from photo_search.media.raw_arw import is_arw
 from photo_search.media.raw_cr2 import is_cr2
 
 
@@ -70,7 +71,7 @@ def recover_cr2_format_failures(
         f"WHERE j.subject_type='asset' AND j.task_type=? AND j.processor_id=? "
         f"AND a.asset_id IN ({placeholders}) AND j.state IN ('FAILED','BLOCKED') "
         "AND j.last_error_code IN ('FORMAT_UNSUPPORTED','DECODE_FAILED') "
-        "AND lower(l.relative_path) LIKE '%.cr2'"
+        "AND (lower(l.relative_path) LIKE '%.cr2' OR lower(l.relative_path) LIKE '%.arw')"
         + scope_clause
         + " ORDER BY j.job_id,l.location_id",
         tuple(parameters),
@@ -80,12 +81,13 @@ def recover_cr2_format_failures(
 
     # Collapse duplicate source locations by job. A matching current revision is necessary
     # before the header probe; DECODE_FAILED is observed but conservatively never rewound.
-    by_job: dict[int, Any] = {}
+    by_job: dict[int, list[Any]] = {}
     for row in rows:
         job_id = int(row["job_id"])
-        by_job.setdefault(job_id, row)
+        by_job.setdefault(job_id, []).append(row)
     candidates: list[Any] = []
-    for row in by_job.values():
+    for locations in by_job.values():
+        row = locations[0]
         if str(row["input_revision"]) != str(row["sha256"]):
             result["cr2_recovery_identity_mismatches"] += 1
             continue
@@ -96,11 +98,12 @@ def recover_cr2_format_failures(
             result["cr2_recovery_decode_failed_retained"] += 1
             continue
         result["cr2_recovery_candidates"] += 1
-        path = Path(str(row["root_path"])) / str(row["relative_path"])
-        try:
-            verified = is_cr2(path)
-        except OSError:
-            verified = False
+        verified = False
+        for location in locations:
+            path = Path(str(location["root_path"])) / str(location["relative_path"])
+            if is_cr2(path) or is_arw(path):
+                verified = True
+                break
         if not verified:
             result["cr2_recovery_unverified_headers"] += 1
             continue

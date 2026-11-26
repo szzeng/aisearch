@@ -70,11 +70,12 @@ def read_normalized_dimensions(path: str | Path) -> tuple[int, int] | None:
     try:
         rawpy = importlib.import_module("rawpy")
         with _RAW_LOCK:
-            with rawpy.imread(str(path)) as raw:
+            with rawpy.RawPy() as raw:
+                raw.open_file(str(path))
                 width = int(raw.sizes.iwidth)
                 height = int(raw.sizes.iheight)
                 flip = int(raw.sizes.flip)
-        if width <= 0 or height <= 0:
+        if width <= 0 or height <= 0 or width * height > MAX_RAW_PIXELS:
             return None
         if flip in (5, 6, 7, 8):
             return height, width
@@ -120,18 +121,26 @@ def decode(path: str | Path, *, max_pixels: int | None = None) -> tuple[Image.Im
             "the file does not contain a Canon CR2 header",
             details={"format": "CR2"},
         )
+    return _decode_verified(candidate, max_pixels=max_pixels)
+
+
+def _decode_verified(
+    candidate: Path, *, max_pixels: int | None = None, raw_format: str = "CR2"
+) -> tuple[Image.Image, int, int]:
+    """Decode a caller-verified RAW using the single process-wide RAW lock."""
     try:
         rawpy = importlib.import_module("rawpy")
     except (ImportError, OSError) as error:
         raise CatalogError(
             RUNTIME_CAPABILITY_UNAVAILABLE,
-            "Canon CR2 decoding is unavailable in this runtime",
-            details={"format": "CR2"},
+            f"{raw_format} decoding is unavailable in this runtime",
+            details={"format": raw_format},
         ) from error
 
     try:
         with _RAW_LOCK:
-            with rawpy.imread(str(candidate)) as raw:
+            with rawpy.RawPy() as raw:
+                raw.open_file(str(candidate))
                 sizes = raw.sizes
                 source_width = int(sizes.iwidth)
                 source_height = int(sizes.iheight)
@@ -140,9 +149,10 @@ def decode(path: str | Path, *, max_pixels: int | None = None) -> tuple[Image.Im
                 if source_width <= 0 or source_height <= 0 or declared_pixels > limit:
                     raise CatalogError(
                         DECODE_FAILED,
-                        "the CR2 image exceeds the bounded RAW pixel limit",
-                        details={"format": "CR2", "pixels": declared_pixels, "max_pixels": limit},
+                        f"the {raw_format} image exceeds the bounded RAW pixel limit",
+                        details={"format": raw_format, "pixels": declared_pixels, "max_pixels": limit},
                     )
+                raw.unpack()
                 pixels = raw.postprocess(
                     output_color=rawpy.ColorSpace.sRGB,
                     output_bps=8,
@@ -152,23 +162,26 @@ def decode(path: str | Path, *, max_pixels: int | None = None) -> tuple[Image.Im
                 )
         image = Image.fromarray(pixels).convert("RGB")
     except CatalogError as error:
-        if error.code == DECODE_FAILED:
+        if raw_format == "CR2" and error.code == DECODE_FAILED:
             _record_metric("cr2_decode_failed")
         raise
     except Exception as error:  # one corrupt CR2 must not abort the batch
-        _record_metric("cr2_decode_failed")
+        if raw_format == "CR2":
+            _record_metric("cr2_decode_failed")
         raise CatalogError(
             DECODE_FAILED,
-            f"cannot decode the Canon CR2 file ({type(error).__name__})",
-            details={"format": "CR2"},
+            f"cannot decode the {raw_format} file ({type(error).__name__})",
+            details={"format": raw_format},
         ) from error
     if image.width <= 0 or image.height <= 0:
         image.close()
-        _record_metric("cr2_decode_failed")
+        if raw_format == "CR2":
+            _record_metric("cr2_decode_failed")
         raise CatalogError(
             DECODE_FAILED,
-            "the CR2 decoder returned no usable pixels",
-            details={"format": "CR2"},
+            f"the {raw_format} decoder returned no usable pixels",
+            details={"format": raw_format},
         )
-    _record_metric("cr2_raw_fallback")
+    if raw_format == "CR2":
+        _record_metric("cr2_raw_fallback")
     return image, source_width, source_height

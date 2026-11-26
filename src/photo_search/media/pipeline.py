@@ -14,6 +14,7 @@ never be published under a content identity the bytes no longer have.
 from __future__ import annotations
 
 import shutil
+import sqlite3
 import time
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -303,7 +304,11 @@ class MediaGenerator:
                 continue
             self._require_free_space()
             published = self.cache.publish(artifact, payload)
-            self.cache.clear_failure(spec=spec, sha256=target.sha256)
+            prior_note = prior_failure.get("cr2_format_retry") if prior_failure else None
+            if isinstance(prior_note, dict) and prior_note.get("attempted"):
+                self._mark_raw_retry_success(spec, target)
+            else:
+                self.cache.clear_failure(spec=spec, sha256=target.sha256)
             return self._attempt(
                 spec,
                 target,
@@ -354,7 +359,7 @@ class MediaGenerator:
         source_ids: Sequence[int | None] | None = None,
     ) -> tuple[dict[str, MediaAttempt], int]:
         """Build missing CR2 thumbnail/preview outputs from one canonical RAW decode."""
-        from photo_search.media import raw_cr2
+        from photo_search.media import raw_arw, raw_cr2
         from photo_search.media.contract import PREVIEW_SPEC, THUMBNAIL_SPEC
 
         specs = (THUMBNAIL_SPEC, PREVIEW_SPEC)
@@ -399,7 +404,10 @@ class MediaGenerator:
             if (
                 spec.kind not in retry_kinds
                 and prior is not None
-                and _cached_failure_applies(prior, present)
+                and (
+                    prior.get("code") == DECODE_FAILED
+                    or _cached_failure_applies(prior, present)
+                )
             ):
                 outcomes[spec.kind] = self._attempt(
                     spec, target, STATE_CACHED_FAILURE, started[spec.kind],
@@ -416,6 +424,7 @@ class MediaGenerator:
             Path(str(row["root_path"])) / str(row["relative_path"])
             for row in present
             if raw_cr2.is_cr2(Path(str(row["root_path"])) / str(row["relative_path"]))
+            or raw_arw.is_arw_candidate(Path(str(row["root_path"])) / str(row["relative_path"]))
         ]
         if not cr2_paths:
             # A `.cr2` path can still contain arbitrary bytes. Its extension never
@@ -424,9 +433,28 @@ class MediaGenerator:
                 outcomes[spec.kind] = self.build(
                     spec,
                     target,
-                    retry_failed=spec.kind in retry_kinds,
+                    retry_failed=False,
                     source_ids=source_ids,
                 )
+            return outcomes, 0
+
+        # A format recovery is spent before decoding, so interruption cannot replay it.
+        # The catalog write transaction serializes competing claims for this data root.
+        claimed: set[str] = set()
+        for spec in list(to_generate):
+            if spec.kind not in retry_kinds:
+                continue
+            if self._claim_raw_format_retry(spec, target):
+                claimed.add(spec.kind)
+            else:
+                prior = prior_failures[spec.kind] or {}
+                outcomes[spec.kind] = self._attempt(
+                    spec, target, STATE_CACHED_FAILURE, started[spec.kind],
+                    code=_optional_text(prior.get("code")),
+                    message="format recovery already spent or could not be recorded",
+                )
+                to_generate.remove(spec)
+        if not to_generate:
             return outcomes, 0
 
         errors: dict[str, list[CatalogError]] = {spec.kind: [] for spec in to_generate}
@@ -491,7 +519,14 @@ class MediaGenerator:
                             )
                         )
                         continue
-                    self.cache.clear_failure(spec=spec, sha256=target.sha256)
+                    prior = prior_failures[spec.kind] or {}
+                    prior_note = prior.get("cr2_format_retry")
+                    if spec.kind in claimed or (
+                        isinstance(prior_note, dict) and prior_note.get("attempted")
+                    ):
+                        self._mark_raw_retry_success(spec, target)
+                    else:
+                        self.cache.clear_failure(spec=spec, sha256=target.sha256)
                     outcomes[spec.kind] = self._attempt(
                         spec, target, STATE_GENERATED, started[spec.kind],
                         source_format=decoded.source_format,
@@ -540,6 +575,55 @@ class MediaGenerator:
                 failure_recorded=recorded,
             )
         return outcomes, raw_decode_calls
+
+    def _claim_raw_format_retry(self, spec: MediaSpec, target: MediaTarget) -> bool:
+        """Atomically serialize and persist one retry while retaining the prior failure."""
+        try:
+            with self.catalog.write() as connection:
+                current = connection.execute(
+                    "SELECT sha256 FROM assets WHERE asset_id=?", (target.asset_id,)
+                ).fetchone()
+                if current is None or str(current[0]) != target.sha256:
+                    return False
+                prior = self.cache.read_failure(spec=spec, sha256=target.sha256)
+                if (
+                    not prior
+                    or prior.get("code") != FORMAT_UNSUPPORTED
+                    or prior.get("sha256") != target.sha256
+                    or prior.get("processor_id") != spec.processor_id
+                    or prior.get("kind") != spec.kind
+                ):
+                    return False
+                note = prior.get("cr2_format_retry")
+                if isinstance(note, dict) and note.get("attempted"):
+                    return False
+                record = dict(prior)
+                record["cr2_format_retry"] = {
+                    "attempted": True,
+                    "attempted_at": int(self.wall_clock_ms()),
+                    "prior_failure": prior,
+                }
+                self.cache.write_failure(spec=spec, sha256=target.sha256, record=record)
+                return True
+        except (CatalogError, OSError, sqlite3.Error):
+            return False
+
+    def _mark_raw_retry_success(self, spec: MediaSpec, target: MediaTarget) -> None:
+        """Keep retry evidence while permitting regeneration of a removed artifact."""
+        try:
+            with self.catalog.write():
+                record = self.cache.read_failure(spec=spec, sha256=target.sha256)
+                if not record:
+                    return
+                note = record.get("cr2_format_retry")
+                if not isinstance(note, dict) or not note.get("attempted"):
+                    return
+                record["cr2_format_retry"] = {**note, "succeeded": True}
+                self.cache.write_failure(spec=spec, sha256=target.sha256, record=record)
+        except (CatalogError, OSError, sqlite3.Error):
+            # The already-published artifact remains valid. A lost success marker fails
+            # closed if that artifact is subsequently removed.
+            return
 
     # ------------------------------------------------------------------- whole batch
     def run(
@@ -701,6 +785,11 @@ class MediaGenerator:
                 # decoder retry fails with the same code again.
                 "prior_failure": cr2_retry_origin,
             }
+        else:
+            previous = self.cache.read_failure(spec=spec, sha256=target.sha256)
+            note = previous.get("cr2_format_retry") if previous else None
+            if isinstance(note, dict) and note.get("attempted"):
+                record["cr2_format_retry"] = {**note, "succeeded": False}
         # A persisted record keeps only the projection that is already in the catalog (a
         # source-relative path at most). No absolute personal path, and never any image
         # content or decoded text, is written to the diagnostic record.
@@ -837,6 +926,9 @@ def _preferred_error(errors: Sequence[CatalogError]) -> CatalogError:
 
 def _cached_failure_applies(record: dict[str, Any], present: Sequence[Any]) -> bool:
     """Skip re-decoding only for a deterministic failure of exactly the same bytes."""
+    note = record.get("cr2_format_retry")
+    if isinstance(note, dict) and note.get("succeeded") is True:
+        return False
     if str(record.get("code")) not in DETERMINISTIC_MEDIA_FAILURES:
         return False
     size = record.get("input_size")

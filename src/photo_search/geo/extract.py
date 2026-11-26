@@ -284,10 +284,15 @@ def _read_exif(path: Path) -> dict[int, Any] | None:
 
     # HEIC/HEIF metadata is only reachable once the one pillow-heif registration point has
     # run; it is idempotent and fails closed by leaving HEIF undecodable (P4-00C-A).
-    from photo_search.media import heif
+    from photo_search.media import heif, raw_arw
 
     heif.ensure_heif_support()
     try:
+        if path.suffix.lower() == ".arw":
+            if not raw_arw.is_arw(path):
+                raise UnidentifiedImageError("not a verified Sony ARW")
+            with raw_arw.open_exif(path) as exif:
+                return read_gps_fields(exif)
         with Image.open(path) as image:
             return read_gps_fields(image.getexif())
     except UnidentifiedImageError as error:

@@ -17,6 +17,7 @@ chain fall through to the next source.
 from __future__ import annotations
 
 import re
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -86,11 +87,21 @@ def read_time_fields(path: str | Path) -> ExifTimeFields:
 
     # The HEIF container is only openable once the single pillow-heif registration point
     # has run (idempotent, and it fails closed by leaving HEIC undecodable) - P4-00C-A.
-    from photo_search.media import heif
+    from photo_search.media import heif, raw_arw
+
+    @contextmanager
+    def exif_source():
+        if Path(path).suffix.lower() == ".arw":
+            if not raw_arw.is_arw(path):
+                raise Image.UnidentifiedImageError("not a verified Sony ARW")
+            with raw_arw.open_exif(path) as value:
+                yield value
+        else:
+            with Image.open(path) as image:
+                yield image.getexif()
 
     heif.ensure_heif_support()
-    with Image.open(path) as image:
-        exif = image.getexif()
+    with exif_source() as exif:
         sub: dict[int, Any] = {}
         try:
             sub = dict(exif.get_ifd(EXIF_IFD_TAG) or {})

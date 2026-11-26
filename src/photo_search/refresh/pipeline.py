@@ -1856,7 +1856,7 @@ def _cr2_assets_in_page(
         "JOIN source_roots AS s ON s.source_id = l.source_id "
         "JOIN assets AS a ON a.asset_id = l.asset_id "
         f"WHERE l.availability = 'PRESENT' AND l.asset_id IN ({placeholders}) "
-        "AND lower(l.relative_path) LIKE '%.cr2'"
+        "AND (lower(l.relative_path) LIKE '%.cr2' OR lower(l.relative_path) LIKE '%.arw')"
     )
     parameters: tuple[Any, ...] = tuple(int(value) for value in asset_ids)
     if source_ids is not None and None not in source_ids:
@@ -1876,6 +1876,7 @@ def _registered_cr2_format_failures(
 ) -> dict[str, list[int]]:
     """Select CR2 FORMAT_UNSUPPORTED failures once; never replay a spent recovery."""
     from photo_search.media.contract import spec_for
+    from photo_search.media.raw_arw import is_arw
     from photo_search.media.raw_cr2 import is_cr2
 
     result = {"thumbnail": [], "preview": []}
@@ -1883,15 +1884,16 @@ def _registered_cr2_format_failures(
         return result
     if rows is None:
         _, rows = _cr2_assets_in_page(service, asset_ids)
-    locations: dict[int, Any] = {}
+    locations: dict[int, list[Any]] = {}
     for row in rows:
         asset_id = int(row["asset_id"])
-        locations.setdefault(asset_id, row)
+        locations.setdefault(asset_id, []).append(row)
     cache = service.media_cache()
     verified: dict[int, bool] = {}
     for kind in result:
         spec = spec_for(kind)
-        for asset_id, row in locations.items():
+        for asset_id, asset_locations in locations.items():
+            row = asset_locations[0]
             sha256 = str(row["sha256"])
             artifact = cache.artifact_path(spec=spec, sha256=sha256)
             if cache.is_published(artifact):
@@ -1904,8 +1906,10 @@ def _registered_cr2_format_failures(
                 and not (isinstance(retry_note, dict) and retry_note.get("attempted"))
             ):
                 if asset_id not in verified:
-                    verified[asset_id] = is_cr2(
-                        Path(str(row["root_path"])) / str(row["relative_path"])
+                    verified[asset_id] = any(
+                        is_cr2(path) or is_arw(path)
+                        for location in asset_locations
+                        for path in [Path(str(location["root_path"])) / str(location["relative_path"])]
                     )
                 if verified[asset_id]:
                     result[kind].append(asset_id)

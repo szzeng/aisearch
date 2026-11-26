@@ -188,6 +188,229 @@ def test_thumbnail_and_preview_are_generated_once_and_cached(api_env) -> None:
     assert published == [f"{sha256}.jpg"]
 
 
+def test_webp_scans_and_serves_jpeg_despite_corrupt_neighbour(api_env) -> None:
+    good = api_env.library / "good.webp"
+    Image.new("RGBA", (1200, 600), (0, 0, 0, 0)).save(good, "WEBP", lossless=True)
+    _stamp_old(good)
+    bad = api_env.library / "bad.webp"
+    bad.write_bytes(b"RIFF\x10\x00\x00\x00WEBPVP8 ")
+    _stamp_old(bad)
+    api_env.scan(api_env.register_source()["source_id"])
+    assets = _asset_ids_by_name(api_env)
+    assert "good.webp" in assets and "bad.webp" in assets
+
+    async def scenario(client: AsyncClient) -> tuple:
+        await api_env.authenticate(client)
+        broken = await client.get(f"/api/v1/assets/{assets['bad.webp']}/thumbnail")
+        thumb = await client.get(f"/api/v1/assets/{assets['good.webp']}/thumbnail")
+        preview = await client.get(f"/api/v1/assets/{assets['good.webp']}/preview")
+        again = await client.get(f"/api/v1/assets/{assets['good.webp']}/thumbnail")
+        return broken, thumb, preview, again
+
+    broken, thumb, preview, again = api_env.scenario(scenario)
+    assert broken.status_code != 200
+    assert thumb.status_code == preview.status_code == again.status_code == 200
+    assert thumb.headers["Content-Type"] == preview.headers["Content-Type"] == "image/jpeg"
+    assert _image_size(thumb.content) == (320, 160)
+    assert _image_size(preview.content) == (1200, 600)
+    assert thumb.content == again.content
+
+
+def test_arw_retry_is_recorded_before_interruption_and_not_repeated(api_env, monkeypatch) -> None:
+    from photo_search.catalog.errors import FORMAT_UNSUPPORTED
+    from photo_search.media import pipeline as media_pipeline
+    from photo_search.media import raw_arw
+    from photo_search.media.contract import PREVIEW_SPEC, THUMBNAIL_SPEC
+    from photo_search.refresh.pipeline import _thumbnail_stage
+
+    source = api_env.library / "old.arw"
+    source.write_bytes(b"synthetic-sony-raw")
+    _stamp_old(source)
+    source_id = api_env.register_source()["source_id"]
+    api_env.scan(source_id)
+    asset_id = api_env.first_asset_id()
+    row = api_env.service.catalog.read_one(
+        "SELECT sha256,byte_size FROM assets WHERE asset_id=?", (asset_id,)
+    )
+    cache = api_env.service.media_cache()
+    for spec in (THUMBNAIL_SPEC, PREVIEW_SPEC):
+        cache.write_failure(spec=spec, sha256=str(row["sha256"]), record={
+            "code": FORMAT_UNSUPPORTED, "message": "old format failure",
+            "sha256": str(row["sha256"]), "processor_id": spec.processor_id, "kind": spec.kind,
+            "input_size": source.stat().st_size, "input_mtime_ns": source.stat().st_mtime_ns,
+        })
+    monkeypatch.setattr(raw_arw, "is_arw", lambda path: Path(path) == source)
+    monkeypatch.setattr(raw_arw, "is_arw_candidate", lambda path: Path(path) == source)
+    calls = []
+
+    def interrupted(_path, *, long_edge):
+        calls.append(long_edge)
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(media_pipeline, "load_normalized", interrupted)
+    from photo_search.catalog.errors import ARTIFACT_WRITE_FAILED, CatalogError
+
+    def fail_marker(*_args, **_kwargs):
+        raise CatalogError(ARTIFACT_WRITE_FAILED, "injected marker write failure")
+
+    with monkeypatch.context() as injected:
+        injected.setattr(MediaCache, "write_failure", fail_marker)
+        _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True,
+                         source_ids=[source_id])
+    assert calls == []
+    try:
+        _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True,
+                         source_ids=[source_id])
+        raise AssertionError("expected interruption")
+    except media_pipeline.MediaInterrupted:
+        pass
+    for spec in (THUMBNAIL_SPEC, PREVIEW_SPEC):
+        record = cache.read_failure(spec=spec, sha256=str(row["sha256"]))
+        assert record["cr2_format_retry"]["attempted"] is True
+        assert record["cr2_format_retry"]["prior_failure"]["message"] == "old format failure"
+    _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True,
+                     source_ids=[source_id])
+    assert calls == [1600]
+
+
+def test_arw_retry_success_preserves_evidence_and_reuses_both_outputs(api_env, monkeypatch) -> None:
+    from photo_search.catalog.errors import FORMAT_UNSUPPORTED
+    from photo_search.media import pipeline as media_pipeline
+    from photo_search.media import raw_arw
+    from photo_search.media.contract import PREVIEW_SPEC, THUMBNAIL_SPEC
+    from photo_search.media.decode import DecodedImage
+    from photo_search.refresh.pipeline import _thumbnail_stage
+
+    source = api_env.library / "old.arw"
+    source.write_bytes(b"synthetic-sony-raw-success")
+    _stamp_old(source)
+    source_id = api_env.register_source()["source_id"]
+    api_env.scan(source_id)
+    asset_id = api_env.first_asset_id()
+    row = api_env.service.catalog.read_one("SELECT sha256 FROM assets WHERE asset_id=?", (asset_id,))
+    cache = api_env.service.media_cache()
+    for spec in (THUMBNAIL_SPEC, PREVIEW_SPEC):
+        cache.write_failure(spec=spec, sha256=str(row["sha256"]), record={
+            "code": FORMAT_UNSUPPORTED, "message": "old failure",
+            "sha256": str(row["sha256"]), "processor_id": spec.processor_id, "kind": spec.kind,
+            "input_size": source.stat().st_size, "input_mtime_ns": source.stat().st_mtime_ns,
+        })
+    monkeypatch.setattr(raw_arw, "is_arw", lambda path: Path(path) == source)
+    monkeypatch.setattr(raw_arw, "is_arw_candidate", lambda path: Path(path) == source)
+    calls = []
+
+    def decoded(_path, *, long_edge):
+        calls.append(long_edge)
+        image = Image.new("RGB", (2000, 1000), "red")
+        return DecodedImage(image, 2000, 1000, "ARW", 1, "RAW")
+
+    monkeypatch.setattr(media_pipeline, "load_normalized", decoded)
+    for _ in range(2):
+        _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True,
+                         source_ids=[source_id])
+    assert calls == [1600]
+    for spec in (THUMBNAIL_SPEC, PREVIEW_SPEC):
+        assert cache.is_published(cache.artifact_path(spec=spec, sha256=str(row["sha256"])))
+        record = cache.read_failure(spec=spec, sha256=str(row["sha256"]))
+        assert record["cr2_format_retry"]["prior_failure"]["message"] == "old failure"
+        assert record["cr2_format_retry"]["succeeded"] is True
+    cache.artifact_path(spec=PREVIEW_SPEC, sha256=str(row["sha256"])).unlink()
+    _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True,
+                     source_ids=[source_id])
+    assert calls == [1600, 1600]
+    assert cache.is_published(cache.artifact_path(spec=PREVIEW_SPEC, sha256=str(row["sha256"])))
+    cache.artifact_path(spec=PREVIEW_SPEC, sha256=str(row["sha256"])).unlink()
+
+    def fails_after_success(_path, *, long_edge):
+        from photo_search.catalog.errors import CatalogError
+
+        calls.append(long_edge)
+        raise CatalogError(FORMAT_UNSUPPORTED, "later decode failure")
+
+    monkeypatch.setattr(media_pipeline, "load_normalized", fails_after_success)
+    for _ in range(2):
+        _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True,
+                         source_ids=[source_id])
+    assert calls == [1600, 1600, 1600]
+    failure = cache.read_failure(spec=PREVIEW_SPEC, sha256=str(row["sha256"]))
+    assert failure["cr2_format_retry"]["succeeded"] is False
+    assert failure["cr2_format_retry"]["prior_failure"]["message"] == "old failure"
+
+
+def test_raw_retry_claim_is_serialized_between_catalog_connections(api_env) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    from photo_search.catalog.db import Catalog
+    from photo_search.catalog.errors import FORMAT_UNSUPPORTED
+    from photo_search.media.pipeline import MediaGenerator, MediaTarget
+
+    api_env.add_photo("one.jpg")
+    api_env.scan(api_env.register_source()["source_id"])
+    asset_id = api_env.first_asset_id()
+    row = api_env.service.catalog.read_one("SELECT sha256,byte_size FROM assets WHERE asset_id=?", (asset_id,))
+    target = MediaTarget(asset_id, str(row["sha256"]), int(row["byte_size"]))
+    cache = api_env.service.media_cache()
+    cache.write_failure(spec=THUMBNAIL_SPEC, sha256=target.sha256, record={
+        "code": FORMAT_UNSUPPORTED, "message": "old", "sha256": target.sha256,
+        "processor_id": THUMBNAIL_SPEC.processor_id, "kind": THUMBNAIL_SPEC.kind,
+    })
+    barrier = Barrier(2)
+
+    def claim() -> bool:
+        catalog = Catalog.open(data_root=api_env.data_root)
+        try:
+            generator = MediaGenerator(catalog, cache=MediaCache.open(api_env.data_root),
+                                       data_root=api_env.data_root)
+            barrier.wait(timeout=30)
+            return generator._claim_raw_format_retry(THUMBNAIL_SPEC, target)
+        finally:
+            catalog.close()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: claim(), range(2)))
+    assert sorted(results) == [False, True]
+    record = cache.read_failure(spec=THUMBNAIL_SPEC, sha256=target.sha256)
+    assert record["cr2_format_retry"]["prior_failure"]["message"] == "old"
+
+
+def test_arw_unknown_decode_failure_is_not_retried_after_mtime_change(api_env, monkeypatch) -> None:
+    from photo_search.catalog.errors import DECODE_FAILED
+    from photo_search.media import pipeline as media_pipeline
+    from photo_search.media import raw_arw
+    from photo_search.media.contract import PREVIEW_SPEC
+    from photo_search.media.decode import DecodedImage
+    from photo_search.refresh.pipeline import _thumbnail_stage
+
+    source = api_env.library / "unknown.arw"
+    source.write_bytes(b"synthetic-sony-raw-decode-failure")
+    _stamp_old(source)
+    source_id = api_env.register_source()["source_id"]
+    api_env.scan(source_id)
+    asset_id = api_env.first_asset_id()
+    row = api_env.service.catalog.read_one("SELECT sha256 FROM assets WHERE asset_id=?", (asset_id,))
+    cache = api_env.service.media_cache()
+    cache.write_failure(spec=THUMBNAIL_SPEC, sha256=str(row["sha256"]), record={
+        "code": DECODE_FAILED, "sha256": str(row["sha256"]),
+        "processor_id": THUMBNAIL_SPEC.processor_id, "kind": THUMBNAIL_SPEC.kind,
+        "input_size": source.stat().st_size, "input_mtime_ns": 1,
+    })
+    monkeypatch.setattr(raw_arw, "is_arw", lambda path: Path(path) == source)
+    monkeypatch.setattr(raw_arw, "is_arw_candidate", lambda path: Path(path) == source)
+    calls = []
+
+    def decoded(_path, *, long_edge):
+        calls.append(long_edge)
+        return DecodedImage(Image.new("RGB", (40, 20)), 40, 20, "ARW", 1, "RAW")
+
+    monkeypatch.setattr(media_pipeline, "load_normalized", decoded)
+    _thumbnail_stage(api_env.service, {asset_id}, None, retry_cr2_failures=True,
+                     source_ids=[source_id])
+    assert calls == [1600]
+    assert not cache.is_published(cache.artifact_path(spec=THUMBNAIL_SPEC, sha256=str(row["sha256"])))
+    assert cache.is_published(cache.artifact_path(spec=PREVIEW_SPEC, sha256=str(row["sha256"])))
+
+
 def test_continue_build_backfills_cr2_preview_and_open_does_not_decode_raw(
     api_env, monkeypatch
 ) -> None:

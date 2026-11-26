@@ -1,3 +1,7 @@
+## Current task: P4-MEDIA-ARW-WEBP-A（2026-11-26）
+
+**IMPLEMENTED / VALIDATION PENDING**：ARW 接入共享 RAW、人脸/OCR、语义输入、原始 EXIF/GPS 和限定历史恢复；三张公开横拍样片源码通过，隔离建库复建零解码。最终受影响 JUnit **319 passed / 4 skipped**（缺 OCR 权重）；本机冻结程序隔离 ARW/WebP JPEG smoke 通过。真实竖拍/GPS、真实模型、完整故障矩阵和独立 DS-H 审查 PENDING。媒体一次性限制仅在失败缓存保留期间有效。详见[任务卡](tasks/P4-MEDIA-ARW-WEBP-A.md)和[报告](reports/P4-MEDIA-ARW-WEBP-A.md)。未访问真实图库或提交推送。
+
 ## Current task: P4-PLACE-CN-AUTO（2026-11-26）
 
 **IMPLEMENTED / VALIDATION PENDING**：refresh 在 GPS 后自动推进 CN 全量或增量处理，复用现有表和版本标记；合成 5,101 条跨批次及 5,000 条续做通过。受影响 JUnit 91/91，最后并发初始化修正后 CN/UI 定向 18/18；为组合证据。用户指定的 Terra High 简要独立复核发现的两项状态展示问题已修复并复看通过，修复后 CN/UI JUnit 19/19；非原定 DS-H 全影响面审查。内置浏览器不可用，任务卡完整故障矩阵仍 PENDING，未访问真实图库。详见[任务卡](tasks/P4-PLACE-CN-AUTO.md)和[报告](reports/P4-PLACE-CN-AUTO.md)。

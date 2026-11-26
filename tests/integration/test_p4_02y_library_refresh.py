@@ -1273,6 +1273,46 @@ def test_the_enrichment_stages_never_walk_the_whole_library(env: RefreshEnv) -> 
     assert delta["stages"]["semantic"]["encoded"] == 1
 
 
+def test_arw_job_recovery_is_scoped_and_preserves_original_failure(env: RefreshEnv, monkeypatch) -> None:
+    from photo_search.refresh import cr2_recovery
+
+    catalog = env.service().catalog
+    row = catalog.read_one(
+        "SELECT a.asset_id,l.location_id,l.relative_path,l.source_id FROM assets a "
+        "JOIN file_locations l ON l.asset_id=a.asset_id WHERE l.availability='PRESENT' LIMIT 1"
+    )
+    source = env.library / str(row["relative_path"])
+    arw = source.with_suffix(".arw")
+    source.rename(arw)
+    payload = b"synthetic-arw-recovery"
+    arw.write_bytes(payload)
+    revision = hashlib.sha256(payload).hexdigest()
+    asset_id = int(row["asset_id"])
+    with catalog.write() as connection:
+        connection.execute("UPDATE assets SET sha256=?,byte_size=? WHERE asset_id=?",
+                           (revision, len(payload), asset_id))
+        relative = arw.relative_to(env.library).as_posix()
+        connection.execute("UPDATE file_locations SET relative_path=?,path_key=? WHERE location_id=?",
+                           (relative, relative.casefold(), int(row["location_id"])))
+        job_id = jobs.enqueue(connection, subject_type="asset", subject_id=str(asset_id),
+                              input_revision=revision, task_type=face_contract.FACE_TASK_TYPE,
+                              processor_id=face_contract.FACE_PROCESSOR_ID, now_ms=catalog.now_ms())
+        connection.execute("UPDATE jobs SET state='FAILED',last_error_code='FORMAT_UNSUPPORTED',"
+                           "last_error_message='old ARW error' WHERE job_id=?", (job_id,))
+    monkeypatch.setattr(cr2_recovery, "is_arw", lambda path: Path(path) == arw)
+    args = dict(data_root=env.data_root, asset_ids=[asset_id],
+                task_type=face_contract.FACE_TASK_TYPE, processor_id=face_contract.FACE_PROCESSOR_ID,
+                artifact_revision=face_contract.FACE_ARTIFACT_REVISION)
+    assert recover_cr2_format_failures(catalog, source_ids=[999999], **args)["cr2_recovery_jobs"] == 0
+    assert recover_cr2_format_failures(catalog, source_ids=[int(row["source_id"])], **args)["cr2_recovery_jobs"] == 1
+    record = catalog.read_one("SELECT * FROM cr2_job_recoveries WHERE job_id=?", (job_id,))
+    assert record["source_error_message"] == "old ARW error"
+    with catalog.write() as connection:
+        connection.execute("UPDATE jobs SET state='FAILED',last_error_code='FORMAT_UNSUPPORTED' "
+                           "WHERE job_id=?", (job_id,))
+    assert recover_cr2_format_failures(catalog, source_ids=[int(row["source_id"])], **args)["cr2_recovery_jobs"] == 0
+
+
 def test_cr2_format_failure_is_recovered_once_and_original_error_is_retained(
     env: RefreshEnv, monkeypatch,
 ) -> None:

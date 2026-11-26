@@ -56,7 +56,7 @@ from photo_search.catalog.errors import (
 )
 from photo_search.catalog.migrate import inspect_database
 from photo_search.indexing.store import IndexCoordinator
-from photo_search.media import raw_cr2
+from photo_search.media import raw_arw, raw_cr2
 from photo_search.scheduler.projection import index_summary
 
 logger = logging.getLogger("photo_search.indexing.maintenance")
@@ -290,7 +290,8 @@ def _validated_image_vector(
 ) -> list[float]:
     """One re-executed vector, validated exactly like a query vector (no padding, no trimming)."""
     try:
-        with raw_cr2.encoder_input(path, temp_root=temp_root) as encoder_path:
+        input_adapter = raw_arw if path.suffix.lower() == ".arw" else raw_cr2
+        with input_adapter.encoder_input(path, temp_root=temp_root) as encoder_path:
             raw = encoder.encode_image(str(encoder_path))
     except CatalogError:
         raise

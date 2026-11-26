@@ -25,7 +25,7 @@ from photo_search.catalog.errors import (
     SOURCE_FILE_MISSING,
     CatalogError,
 )
-from photo_search.media import heif, raw_cr2
+from photo_search.media import heif, raw_arw, raw_cr2
 from photo_search.media.contract import (
     refused_input_formats,
     supported_input_formats,
@@ -122,6 +122,12 @@ def load_normalized(
     The returned image is fully loaded and owned by the caller, so the source file can be
     closed immediately and the image can be resized in place.
     """
+    if path.suffix.lower() == ".arw":
+        image, _, _ = raw_arw.decode(path, max_pixels=max_pixels)
+        return DecodedImage(
+            image=image, width=int(image.width), height=int(image.height),
+            source_format="ARW", orientation=1, source_mode="RAW",
+        )
     if raw_cr2.is_cr2(path):
         image, _, _ = raw_cr2.decode(path, max_pixels=max_pixels)
         return DecodedImage(
@@ -202,6 +208,8 @@ def load_normalized(
 
 def read_normalized_dimensions(path: Path) -> tuple[int, int] | None:
     """Read an image's upright pixel dimensions from its header without decoding pixels."""
+    if path.suffix.lower() == ".arw":
+        return raw_cr2.read_normalized_dimensions(path) if raw_arw.is_arw(path) else None
     if raw_cr2.is_cr2(path):
         return raw_cr2.read_normalized_dimensions(path)
     heif.ensure_heif_support()

@@ -25,9 +25,16 @@ class _FakeRaw:
     def postprocess(self, **_: object) -> np.ndarray:
         return np.zeros((40, 20, 3), dtype=np.uint8)
 
+    def open_file(self, _path: str) -> None:
+        return None
+
+    def unpack(self) -> None:
+        return None
+
 
 class _FakeRawPy:
     ColorSpace = SimpleNamespace(sRGB="sRGB")
+    RawPy = _FakeRaw
 
     @staticmethod
     def imread(_: str) -> _FakeRaw:
@@ -65,7 +72,12 @@ def test_cr2_raw_decode_is_oriented_rgb_and_dimension_probe_is_header_only(
         assert (source_width, source_height) == (40, 20)
     finally:
         image.close()
-    assert raw_cr2.read_normalized_dimensions(source) == (20, 40)
+    with monkeypatch.context() as dimensions_only:
+        def unexpected_unpack(_self):
+            raise AssertionError("dimension probing must not unpack RAW pixels")
+
+        dimensions_only.setattr(_FakeRaw, "unpack", unexpected_unpack)
+        assert raw_cr2.read_normalized_dimensions(source) == (20, 40)
     assert probe_original_frame(source) == (20, 40)
     decoded = load_normalized(source, long_edge=320)
     assert (decoded.width, decoded.height, decoded.orientation, decoded.source_format) == (
@@ -134,6 +146,7 @@ def test_continue_build_retries_only_cr2_format_unsupported_cache(tmp_path) -> N
     class Catalog:
         def read_all(self, *_):
             return [
+                {"asset_id": 1, "sha256": "sha-1", "relative_path": "impostor.cr2", "root_path": str(tmp_path)},
                 {"asset_id": 1, "sha256": "sha-1", "relative_path": "valid.cr2", "root_path": str(tmp_path)},
                 {"asset_id": 2, "sha256": "sha-2", "relative_path": "impostor.cr2", "root_path": str(tmp_path)},
             ]

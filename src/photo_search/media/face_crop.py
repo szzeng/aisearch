@@ -42,7 +42,7 @@ from photo_search.catalog.errors import (
     SOURCE_FILE_MISSING,
     CatalogError,
 )
-from photo_search.media import heif, raw_cr2
+from photo_search.media import heif, raw_arw, raw_cr2
 from photo_search.media.contract import (
     FACE_CROP_JPEG_QUALITY,
     FACE_CROP_LONG_EDGE,
@@ -225,6 +225,11 @@ def probe_original_frame(path: str | Path) -> tuple[int, int]:
     decoding pixels, so a 100-megapixel original costs the same as a small one here.
     """
     candidate = Path(path)
+    if candidate.suffix.lower() == ".arw":
+        size = raw_cr2.read_normalized_dimensions(candidate) if raw_arw.is_arw(candidate) else None
+        if size is None or size[0] <= 0 or size[1] <= 0:
+            raise CatalogError(DECODE_FAILED, "the ARW source frame cannot be measured safely")
+        return size
     if raw_cr2.is_cr2(candidate):
         if not raw_cr2.runtime_available():
             raise CatalogError(
