@@ -2435,9 +2435,9 @@ async def cn_admin_update(request: Request, restart: bool = False, dataset_id: s
     content = await asyncio.to_thread(geo_resolver.load_content_snapshot, dict(active), data_root=service.data_root)
     if dataset_id is not None and dataset_id != content.dataset_id:
         raise ApiError(CATALOG_FILTER_REVISION_STALE, "the Chinese place package changed", status=409)
-    run, rows = cn_facets.inputs(service.catalog, content, restart=restart)
-    results = await asyncio.to_thread(cn_facets.calculate, content, rows)
-    return cn_facets.publish(service.catalog, content, run, rows, results)
+    return await run_catalog_projection(
+        service.catalog, cn_facets.update_auto, content, limit=100, restart=restart
+    )
 
 
 @router.get("/places/coverage", response_model=PlaceCoverageResponse, summary="Place coverage")

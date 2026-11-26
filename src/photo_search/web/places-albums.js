@@ -467,7 +467,8 @@
     cnCapabilityStarted = true;
     get("/places/admin/capabilities").then(function (body) {
       cnCapability = body; cnUpdate.hidden = !body.available;
-      if (body.available && body.update && !body.update.complete) cnStatus.textContent = "中国地点更新尚未完成，点击继续；已完成的结果会复用。";
+      if (!body.available) cnStatus.textContent = "中国地点暂不可用，请检查地名包。";
+      else cnStatus.textContent = "中国地点会在建库或刷新时自动整理；如有待处理，也可点击继续。";
     }).catch(function (error) {
       cnStatus.textContent = "无法读取中国地点更新能力：" + error.message;
       cnCapabilityStarted = false;
@@ -480,14 +481,15 @@
       if (!cnCapability || !cnCapability.available || cnUpdate.disabled) return;
       cnStop = false; cnUpdate.disabled = true; cnPause.hidden = false; cnPause.disabled = false;
       cnStatus.textContent = "正在更新中国地点，仅使用已有GPS…";
-      var restart = Boolean(cnCapability.update && cnCapability.update.complete);
+      var restart = false, scanned = 0, processed = 0;
       function batch() {
         var query = new URLSearchParams({ dataset_id: cnCapability.dataset_id, restart: String(restart) }); restart = false;
         return fetch(api + "/places/admin/update?" + query, { method: "POST", credentials: "same-origin", headers: { "X-CSRF-Token": csrf(), Accept: "application/json" } }).then(function (r) {
           return r.json().then(function (b) { if (!r.ok) throw new Error(b.message || b.code || "更新失败"); return b; });
         }).then(function (body) {
           cnCapability.update = body;
-          cnStatus.textContent = "已查看 " + body.total_scanned + " 张有效GPS照片，新解析 " + body.total_processed + " 张" + (body.complete ? "；更新完成。" : cnStop ? "；已暂停，可继续。" : "；更新中…");
+          scanned += body.scanned; processed += body.processed;
+          cnStatus.textContent = "本次已查看 " + scanned + " 张有效GPS照片，新解析 " + processed + " 张" + (body.complete ? "；更新完成。" : cnStop ? "；已暂停，可继续。" : "；更新中…");
           if (!body.complete && !cnStop) return new Promise(function (resolve) { window.setTimeout(resolve, 25); }).then(batch);
         });
       }

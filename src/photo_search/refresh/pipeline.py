@@ -1510,6 +1510,7 @@ def _enrichment_stages(
         "thumbnail": lambda: _thumbnail_stage(service, content, cancel_check),
         "taken_time": lambda: _taken_time_stage(catalog, content | location),
         "gps": lambda: _gps_stage(catalog, content),
+        "cn_admin": lambda: _cn_admin_stage(catalog, service.data_root, mode, cancel_check),
         "place_resolver": lambda: _resolver_stage(catalog, service.data_root, content),
         "face": lambda: _face_stage(
             catalog, service.data_root, content, source_detail=face_profile == "source_detail",
@@ -1548,6 +1549,7 @@ def _enrichment_stages(
                 runner=lambda page: _gps_stage(catalog, page),
                 cancel_check=cancel_check,
             ),
+            "cn_admin": lambda: _cn_admin_stage(catalog, service.data_root, mode, cancel_check),
             "place_resolver": lambda: _drain_scope(
                 catalog,
                 scopes=scopes,
@@ -1955,6 +1957,27 @@ def _gps_stage(catalog: Any, assets: set[int]) -> dict[str, Any]:
         "steps": steps,
         "truncated": len(assets) > len(targets),
     }
+
+
+def _cn_admin_stage(catalog: Any, data_root: Any, mode: str, cancel_check: Any) -> dict[str, Any]:
+    from photo_search.geo import resolver
+    from photo_search.places import cn_facets
+
+    try:
+        content = resolver.load_active_content(catalog.connection, data_root=data_root)
+    except CatalogError as error:
+        if str(error.code) == "PLACE_DATASET_MISSING":
+            return {"state": STAGE_SKIPPED, "reason": str(error.code)}
+        raise
+    if content.cn_admin is None:
+        return {"state": STAGE_SKIPPED, "reason": "CN_ADDON_MISSING"}
+    result = cn_facets.update_auto(
+        catalog, content, limit=BUILD_PAGE_SIZE * BUILD_ROUND_CAP
+        if mode == REFRESH_MODE_BUILD else ENRICH_LIMIT, cancel_check=cancel_check
+    )
+    if cancel_check is not None and cancel_check():
+        return {"state": STAGE_FAILED, "reason": "CANCELLED", **result}
+    return {"state": STAGE_OK, **result}
 
 
 def _resolver_stage(catalog: Any, data_root: Any, assets: set[int]) -> dict[str, Any]:

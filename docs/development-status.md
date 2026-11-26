@@ -1,3 +1,7 @@
+## Current task: P4-PLACE-CN-AUTO（2026-11-26）
+
+**IMPLEMENTED / VALIDATION PENDING**：refresh 在 GPS 后自动推进 CN 全量或增量处理，复用现有表和版本标记；合成 5,101 条跨批次及 5,000 条续做通过。受影响 JUnit 91/91，最后并发初始化修正后 CN/UI 定向 18/18；为组合证据。用户指定的 Terra High 简要独立复核发现的两项状态展示问题已修复并复看通过，修复后 CN/UI JUnit 19/19；非原定 DS-H 全影响面审查。内置浏览器不可用，任务卡完整故障矩阵仍 PENDING，未访问真实图库。详见[任务卡](tasks/P4-PLACE-CN-AUTO.md)和[报告](reports/P4-PLACE-CN-AUTO.md)。
+
 ## Current task: P4-PHOTO-RANDOM-BROWSE-TIME（2026-11-26）
 
 **IMPLEMENTED / VALIDATION PENDING**：随机页按可信拍摄时间、受控文件创建时间、未知的顺序显示，普通列表保留加入时间；每页批量读取时间，仅对缺失者查受控位置。定向 JUnit 22/22；隔离真实浏览器检查与独立只读复核仍 PENDING，未访问真实图库。详见[任务卡](tasks/P4-PHOTO-RANDOM-BROWSE-TIME.md)和[报告](reports/P4-PHOTO-RANDOM-BROWSE-TIME.md)。

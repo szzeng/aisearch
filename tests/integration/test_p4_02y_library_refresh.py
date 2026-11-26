@@ -616,7 +616,7 @@ def test_face_session_release_failure_stops_before_ocr(
         cancel_check=None,
     )
 
-    assert visited == ["thumbnail", "taken_time", "gps", "place_resolver", "face"]
+    assert visited == ["thumbnail", "taken_time", "gps", "cn_admin", "place_resolver", "face"]
     assert stages["face"]["state"] == "FAILED"
     assert stages["face"]["reason"] == "SESSION_RELEASE_FAILED"
     assert "ocr" not in stages

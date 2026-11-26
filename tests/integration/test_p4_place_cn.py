@@ -492,3 +492,101 @@ def test_cn_status_does_not_reparse_registered_geometry(api_env, monkeypatch):
     (stored / "cn-admin/cn-admin.jsonl.gz").write_bytes(b"broken")
     result = datasets.dataset_status(catalog.connection, data_root=api_env.data_root)
     assert not result["resolver_available"] and result["state"] == "invalid"
+
+
+def test_auto_backfill_incremental_and_revision_fence(api_env, monkeypatch):
+    catalog = api_env.service.catalog
+    install(catalog, api_env.tmp_path)
+    ids = seed(api_env, count=4)
+    content = resolver.load_active_content(catalog.connection, data_root=api_env.data_root)
+    first = cn_facets.update_auto(catalog, content, limit=5000)
+    assert first["mode"] == "full" and first["complete"] and first["processed"] == 4
+    assert albums.albums(catalog, api_env.data_root, kind="district")["albums"][0]["total"] == 4
+    assert cn_facets.update_auto(catalog, content, limit=5000)["skipped_unchanged"]
+    # Remove one derived product and change the observed revision, simulating a
+    # committed GPS change followed by process exit before CN work starts.
+    with catalog.write() as connection:
+        connection.execute("DELETE FROM cn_admin_resolutions WHERE asset_id=?", (ids[0],))
+        connection.execute("UPDATE map_member_revision SET revision=revision+1 WHERE singleton=1")
+    original = cn_facets.calculate
+    changed = False
+    def racing(content, rows):
+        nonlocal changed
+        result = original(content, rows)
+        if rows and not changed:
+            with catalog.write() as connection:
+                connection.execute("UPDATE map_member_revision SET revision=revision+1 WHERE singleton=1")
+            changed = True
+        return result
+    monkeypatch.setattr(cn_facets, "calculate", racing)
+    raced = cn_facets.update_auto(catalog, content, limit=5000)
+    assert raced["processed"] == 1 and not raced["complete"]
+    assert cn_facets.update_auto(catalog, content, limit=5000)["complete"]
+    assert cn_facets.update_auto(catalog, content, limit=5000)["skipped_unchanged"]
+
+
+def test_auto_full_cancel_resume(api_env):
+    catalog = api_env.service.catalog
+    install(catalog, api_env.tmp_path)
+    seed(api_env, count=4)
+    content = resolver.load_active_content(catalog.connection, data_root=api_env.data_root)
+    stopped = cn_facets.update_auto(catalog, content, limit=5000, cancel_check=lambda: True)
+    assert not stopped["complete"] and stopped["processed"] == 0
+    resumed = cn_facets.update_auto(catalog, content, limit=5000)
+    assert resumed["complete"] and resumed["processed"] == 4
+
+
+def test_auto_build_and_incremental_budget_5101(api_env):
+    from photo_search.refresh import pipeline
+
+    catalog = api_env.service.catalog
+    install(catalog, api_env.tmp_path)
+    seed(api_env, count=1)
+    with catalog.write() as connection:
+        connection.executemany(
+            "INSERT INTO assets(sha256,byte_size,created_at) VALUES (?,1,1)",
+            [(f"{n:064x}",) for n in range(10000, 15100)],
+        )
+        connection.execute(
+            """INSERT INTO asset_geo_facts(asset_id,geo_fact_id,input_revision,fact_revision,
+            status,source,processor_id,raw_fields_checksum_sha256,raw_gps_json,latitude,
+            longitude,datum_status,created_at,updated_at)
+            SELECT asset_id, 'auto-' || asset_id, sha256, 1, 'VALID', 'EXIF_GPS',
+            'geo-exif-gps@1', ?, '{}', 30.273, 120.09, 'WGS84', 1, 1 FROM assets
+            WHERE asset_id NOT IN (SELECT asset_id FROM asset_geo_facts)""", ("a" * 64,)
+        )
+    content = resolver.load_active_content(catalog.connection, data_root=api_env.data_root)
+    first_full = cn_facets.update_auto(catalog, content, limit=100)
+    second_full = cn_facets.update_auto(catalog, content, limit=100)
+    assert (first_full["total_scanned"], second_full["total_scanned"]) == (100, 200)
+    assert (first_full["total_processed"], second_full["total_processed"]) == (100, 200)
+    result = pipeline._cn_admin_stage(catalog, api_env.data_root, pipeline.REFRESH_MODE_BUILD, None)
+    assert result["complete"] and result["processed"] == 4901
+    with catalog.write() as connection:
+        connection.execute("DELETE FROM cn_admin_resolutions")
+        connection.execute("UPDATE map_member_revision SET revision=revision+1 WHERE singleton=1")
+    content = resolver.load_active_content(catalog.connection, data_root=api_env.data_root)
+    first = cn_facets.update_auto(catalog, content, limit=5000)
+    assert first["scanned"] == 5000 and not first["complete"]
+    second = cn_facets.update_auto(catalog, content, limit=5000)
+    assert second["processed"] == 101 and second["complete"]
+    assert catalog.read_one("SELECT COUNT(*) FROM cn_admin_resolutions")[0] == 5101
+
+
+def test_auto_gps_change_replaces_current_resolution_without_touching_manual(api_env):
+    catalog = api_env.service.catalog
+    install(catalog, api_env.tmp_path)
+    ids = seed(api_env, count=1)
+    content = resolver.load_active_content(catalog.connection, data_root=api_env.data_root)
+    assert cn_facets.update_auto(catalog, content, limit=5000)["complete"]
+    before = [tuple(row) for row in catalog.read_all("SELECT * FROM asset_place_assignments")]
+    with catalog.write() as connection:
+        connection.execute(
+            "UPDATE asset_geo_facts SET geo_fact_id=?,fact_revision=fact_revision+1 WHERE asset_id=?",
+            ("new-synthetic-fact", ids[0]),
+        )
+    result = cn_facets.update_auto(catalog, content, limit=5000)
+    assert result["complete"] and result["processed"] == 1
+    assert catalog.read_one("SELECT COUNT(*) FROM cn_admin_resolutions WHERE asset_id=?", (ids[0],))[0] == 2
+    assert cn_facets.asset_projection(catalog, ids[0])["reason"] == "MATCHED"
+    assert before == [tuple(row) for row in catalog.read_all("SELECT * FROM asset_place_assignments")]

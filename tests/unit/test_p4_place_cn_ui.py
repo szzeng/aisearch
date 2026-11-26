@@ -55,15 +55,18 @@ const album=(kind,name)=>({kind,name,key:'cn:3',parent:'浙江省 · 杭州市',
   assert.equal(photo.disposed,true);get('album-kind').value='province';get('album-kind').fire('change');
   assert.equal(get('album-detail-view').hidden,true);assert.equal(get('album-photos').children.length,0);
   get('cn-update').fire('click');assert.equal(posts.length,1);assert.equal(get('cn-pause').hidden,false);
-  get('cn-pause').fire('click');posts[0].resolve({complete:false,total_scanned:100,total_processed:100});await settle();
+  get('cn-pause').fire('click');posts[0].resolve({complete:false,scanned:100,processed:100,total_scanned:100,total_processed:100});await settle();
   assert.equal(posts.length,1);assert.match(get('cn-update-status').textContent,/已暂停/);
   assert.equal(get('cn-update').disabled,false);
   get('cn-update').fire('click');assert.equal(posts.length,2);assert.match(posts[1].url,/restart=false/);
   assert.equal(posts[1].options.headers['X-CSRF-Token'],'synthetic');
-  posts[1].resolve({complete:true,total_scanned:107,total_processed:107});await settle();
-  assert.match(get('cn-update-status').textContent,/更新完成/);
-  get('cn-update').fire('click');assert.match(posts[2].url,/restart=true/);
-  posts[2].resolve({complete:true,total_scanned:107,total_processed:0});await settle();
+  posts[1].resolve({complete:false,scanned:100,processed:100,total_scanned:200,total_processed:200});await settle();
+  assert.match(get('cn-update-status').textContent,/本次已查看 100/);
+  assert.equal(posts.length,3);
+  posts[2].resolve({complete:true,scanned:7,processed:7,total_scanned:207,total_processed:207});await settle();
+  assert.match(get('cn-update-status').textContent,/本次已查看 107 张有效GPS照片，新解析 107 张；更新完成/);
+  get('cn-update').fire('click');assert.match(posts[3].url,/restart=false/);
+  posts[3].resolve({complete:true,scanned:0,processed:0,total_scanned:0,total_processed:0});await settle();
 })().catch(error=>{console.error(error);process.exitCode=1;});
 """
     result = subprocess.run(

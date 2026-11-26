@@ -324,7 +324,7 @@ def asset_projection(catalog: Any, asset_id: int) -> dict[str, Any]:
     }
 
 
-def start(catalog: Any, dataset_id: str) -> None:
+def start(catalog: Any, dataset_id: str, *, if_missing: bool = False) -> None:
     upper = int(catalog.read_one("SELECT COALESCE(MAX(asset_id),0) AS n FROM assets")["n"])
     with catalog.write() as connection:
         active = connection.execute(
@@ -332,10 +332,16 @@ def start(catalog: Any, dataset_id: str) -> None:
         ).fetchone()
         if active["dataset_id"] != dataset_id:
             raise ApiError(CATALOG_FILTER_REVISION_STALE, "the place package changed", status=409)
-        connection.execute(
-            "INSERT INTO cn_update_runs VALUES (?,0,?,0,0,0,1) ON CONFLICT(dataset_id) DO UPDATE SET after_asset_id=0,upper_asset_id=excluded.upper_asset_id,scanned=0,processed=0,complete=0,generation=generation+1",
-            (dataset_id, upper),
-        )
+        if if_missing:
+            connection.execute(
+                "INSERT OR IGNORE INTO cn_update_runs VALUES (?,0,?,0,0,0,1)",
+                (dataset_id, upper),
+            )
+        else:
+            connection.execute(
+                "INSERT INTO cn_update_runs VALUES (?,0,?,0,0,0,1) ON CONFLICT(dataset_id) DO UPDATE SET after_asset_id=0,upper_asset_id=excluded.upper_asset_id,scanned=0,processed=0,complete=0,generation=generation+1",
+                (dataset_id, upper),
+            )
 
 
 def inputs(
@@ -349,7 +355,7 @@ def inputs(
         start(catalog, content.dataset_id)
     run = catalog.read_one("SELECT * FROM cn_update_runs WHERE dataset_id=?", (content.dataset_id,))
     if run is None:
-        start(catalog, content.dataset_id)
+        start(catalog, content.dataset_id, if_missing=True)
         run = catalog.read_one(
             "SELECT * FROM cn_update_runs WHERE dataset_id=?", (content.dataset_id,)
         )
@@ -377,7 +383,8 @@ def calculate(
 
 
 def publish(
-    catalog: Any, content: Any, run: dict[str, Any], rows: list[dict[str, Any]], results: list[Any]
+    catalog: Any, content: Any, run: dict[str, Any], rows: list[dict[str, Any]], results: list[Any],
+    *, incremental: bool = False
 ) -> dict[str, Any]:
     added = 0
     with catalog.write() as connection:
@@ -387,7 +394,7 @@ def publish(
         current = connection.execute(
             "SELECT * FROM cn_update_runs WHERE dataset_id=?", (content.dataset_id,)
         ).fetchone()
-        if active["dataset_id"] != content.dataset_id or dict(current) != run:
+        if active["dataset_id"] != content.dataset_id or current is None or dict(current) != run:
             raise ApiError(
                 CATALOG_FILTER_REVISION_STALE,
                 "the Chinese place update changed; resume",
@@ -422,10 +429,11 @@ def publish(
             added += cursor.rowcount
         complete = len(rows) < 100
         after = int(rows[-1]["asset_id"]) if rows else int(run["upper_asset_id"])
-        connection.execute(
-            "UPDATE cn_update_runs SET after_asset_id=?,scanned=scanned+?,processed=processed+?,complete=? WHERE dataset_id=?",
-            (after, len(rows), added, int(complete), content.dataset_id),
-        )
+        if not incremental:
+            connection.execute(
+                "UPDATE cn_update_runs SET after_asset_id=?,scanned=scanned+?,processed=processed+?,complete=? WHERE dataset_id=?",
+                (after, len(rows), added, int(complete), content.dataset_id),
+            )
         if added:
             revision.bump_suggestion_revision(
                 connection, cause="CN_ADMIN_CHANGED", now_ms=catalog.now_ms()
@@ -439,3 +447,69 @@ def publish(
         "total_scanned": run["scanned"] + len(rows),
         "complete": complete,
     }
+
+
+def update_auto(catalog: Any, content: Any, *, limit: int, cancel_check: Any = None,
+                restart: bool = False) -> dict[str, Any]:
+    """Advance durable full backfill, then fence a bounded missing-result catch-up."""
+    if content.cn_admin is None:
+        raise ApiError(PLACE_DATASET_MISSING, "the active package has no Chinese boundaries", status=409)
+    if restart:
+        start(catalog, content.dataset_id)
+    run = catalog.read_one("SELECT * FROM cn_update_runs WHERE dataset_id=?", (content.dataset_id,))
+    if run is None:
+        start(catalog, content.dataset_id, if_missing=True)
+        run = catalog.read_one("SELECT * FROM cn_update_runs WHERE dataset_id=?", (content.dataset_id,))
+    key = f"cn_checked:{content.dataset_id}:{content.manifest['content_sha256']}:{PROCESSOR}"
+    snapshot = int(catalog.read_one("SELECT revision FROM map_member_revision WHERE singleton=1")[0])
+    marker = catalog.read_one("SELECT value FROM metadata WHERE key=?", (key,))
+    scanned = processed = 0
+    mode = "full" if not run["complete"] else "incremental"
+    if run["complete"] and marker is not None and marker[0] == str(snapshot):
+        return {"contract_version": CONTRACT, "dataset_id": content.dataset_id, "mode": mode,
+                "scanned": 0, "processed": 0, "total_scanned": 0, "total_processed": 0,
+                "complete": True, "skipped_unchanged": True, "pending": False}
+    after = 0
+    complete = False
+    while scanned < limit:
+        if cancel_check is not None and cancel_check():
+            break
+        run = catalog.read_one("SELECT * FROM cn_update_runs WHERE dataset_id=?", (content.dataset_id,))
+        if not run["complete"]:
+            run, rows = inputs(catalog, content)
+            out = publish(catalog, content, run, rows, calculate(content, rows))
+        else:
+            rows = [dict(row) for row in catalog.read_all(
+                """SELECT gf.*, NULL AS already_resolved FROM asset_geo_facts gf NOT INDEXED
+                JOIN assets a ON a.asset_id=gf.asset_id AND a.sha256=gf.input_revision
+                WHERE gf.asset_id>? AND gf.status='VALID'
+                  AND gf.datum_status IN ('WGS84','ASSUMED_WGS84')
+                  AND NOT EXISTS (SELECT 1 FROM cn_admin_resolutions r WHERE r.dataset_id=?
+                    AND r.asset_id=gf.asset_id AND r.geo_fact_id=gf.geo_fact_id
+                    AND r.input_revision=gf.input_revision AND r.processor_id=?)
+                ORDER BY gf.asset_id LIMIT ?""",
+                (after, content.dataset_id, PROCESSOR, min(100, limit-scanned)))]
+            out = publish(catalog, content, dict(run), rows, calculate(content, rows), incremental=True)
+            if rows:
+                after = int(rows[-1]["asset_id"])
+            if not rows:
+                with catalog.write() as connection:
+                    active = connection.execute("SELECT dataset_id FROM active_geo_dataset WHERE singleton=1").fetchone()
+                    current = connection.execute("SELECT revision FROM map_member_revision WHERE singleton=1").fetchone()
+                    current_run = connection.execute("SELECT * FROM cn_update_runs WHERE dataset_id=?", (content.dataset_id,)).fetchone()
+                    if (active[0] == content.dataset_id and int(current[0]) == snapshot
+                            and current_run is not None and dict(current_run) == dict(run)
+                            and current_run["complete"]):
+                        connection.execute("INSERT INTO metadata(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(snapshot)))
+                        complete = True
+                break
+        scanned += out["scanned"]
+        processed += out["processed"]
+    if mode == "full":
+        latest = catalog.read_one("SELECT scanned,processed FROM cn_update_runs WHERE dataset_id=?", (content.dataset_id,))
+        total_scanned, total_processed = int(latest["scanned"]), int(latest["processed"])
+    else:
+        total_scanned, total_processed = scanned, processed
+    return {"contract_version": CONTRACT, "dataset_id": content.dataset_id, "mode": mode,
+            "scanned": scanned, "processed": processed, "total_scanned": total_scanned,
+            "total_processed": total_processed, "complete": complete, "pending": not complete}
