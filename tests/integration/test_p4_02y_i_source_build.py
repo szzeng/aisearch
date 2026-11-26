@@ -396,11 +396,22 @@ def test_building_only_the_later_source_indexes_its_shared_content(tmp_path: Pat
             path.write_bytes((env.library / f"photo-{index:03d}.jpg").read_bytes())
             os.utime(path, ns=((1_700_000_000_000 - 3_600_000) * 1_000_000,) * 2)
         source_id = register_source(env, "later source", second)
+        original_before = source_payload(env, 1)
+        assert original_before["progress"]["stages"]["semantic"]["state"] == "UNBUILT"
+
         status = run(env, mode="build", source_ids=[source_id])
         assert status["state"] == "COMPLETE" and status["search_ready"] is True
+        assert status["source_ids"] == [source_id]
         assert status["stages"]["semantic"]["encoded"] == 2
         assert status["stages"]["semantic"]["backlog_confirmed"] == 2
         assert len(env.adapter.image_calls) == 2
+        assert asset_of(env, "copy-0.jpg") == asset_of(env, "photo-000.jpg")
+
+        original_after = source_payload(env, 1)
+        assert original_after["last_successful_scan"] == original_before["last_successful_scan"]
+        assert original_after["status"] == original_before["status"]
+        assert original_after["progress"]["stages"]["semantic"]["state"] == "SEARCHABLE"
+        assert original_after["progress"]["stages"]["semantic"]["confirmed"] == 2
     finally:
         env.close()
 

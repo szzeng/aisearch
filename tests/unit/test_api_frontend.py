@@ -1260,3 +1260,132 @@ const flush = () => new Promise(setImmediate);
         capture_output=True, text=True, encoding="utf-8", timeout=10,
     )
     assert result.returncode == 0, result.stderr
+
+
+
+@pytest.mark.parametrize(
+    ("mode", "terminal_state", "summary_outcome"),
+    [
+        ("build", "COMPLETE", "ok"),
+        ("refresh", "PARTIAL_FAILED", "ok"),
+        ("refresh", "FAILED", "ok"),
+        ("build", "COMPLETE", "failed"),
+        ("build", "COMPLETE", "superseded"),
+    ],
+)
+def test_scoped_refresh_invalidates_shared_photo_progress_cache(
+    mode: str, terminal_state: str, summary_outcome: str
+) -> None:
+    node = shutil.which("node")
+    assert node is not None
+    script = r"""
+const fs = require("fs"), vm = require("vm"), assert = require("assert/strict");
+const document = {readyState: "loading", addEventListener() {}};
+const window = {AbortController};
+const [mode, terminalState, summaryOutcome] = process.argv.slice(1);
+let code = fs.readFileSync("src/photo_search/web/app.js", "utf8");
+code = code.replace('  if (document.readyState === "loading")',
+  '  globalThis.ui = {state, pollRefresh, loadSourceDetail, loadSources, ' +
+  'pruneSourceDetailConsumers, setup(run, renderDetail, renderCards) {' +
+  'request = run; renderSourceDetail = renderDetail; renderSources = renderCards;' +
+  'renderRefresh = setStatus = updateFirstUseGuide = updateGlobalRefreshActions = () => {};' +
+  'renderSourceOptions = updateSearchScopeAction = () => {}; sourcePathsCoverSources = () => true;' +
+  'els = {views: {sources: {hidden: false}}, browseSource: {}, browseOrder: {}, ' +
+  'browseCaptureFrom: {}, browseCaptureTo: {}}; }};' +
+  '\n  if (document.readyState === "loading")');
+const context = {document, window};
+vm.createContext(context);
+vm.runInContext(code, context);
+const ui = context.ui;
+const a = {source_id: 1}, b = {source_id: 2, status: "ACTIVE", last_successful_scan: 10};
+const c = {source_id: 3};
+const detailCalls = [], summaries = [];
+let terminal = {refresh_id: "round-1", mode, state: terminalState, running: false, source_ids: [1]};
+let bPanel = {};
+const flush = () => new Promise(setImmediate);
+// The API integration test shows that building A can update B's shared-photo
+// progress without a scan of B. Model that response here to exercise the client cache.
+const detail = (stage) => ({progress: {stages: {semantic: {state: stage}}}});
+ui.state.sources = [a, b];
+ui.state.sourcesLoaded = true;
+const open = (source, panel) => ui.loadSourceDetail(source, panel, ui.state.sourceDetailGeneration);
+const replyWithSummary = (index) => summaries[index].resolve({body: {sources: [a, {...b}, c]}});
+ui.setup((path, options) => {
+  if (path === "/library/refresh") return Promise.resolve({body: terminal});
+  if (path === "/sources/summary") return new Promise((resolve, reject) => summaries.push({resolve, reject}));
+  return new Promise(resolve => detailCalls.push({path, signal: options.signal, resolve}));
+}, (_source, payload, panel) => { panel.stage = payload.progress.stages.semantic.state; }, () => {
+  ui.state.sourceDetailGeneration++;
+  bPanel = {};
+  open(b, bPanel);
+  ui.pruneSourceDetailConsumers(ui.state.sourceDetailGeneration);
+});
+
+(async () => {
+  open(b, bPanel);
+  detailCalls[0].resolve({body: detail("UNBUILT")});
+  await flush();
+  assert.equal(bPanel.stage, "UNBUILT");
+
+  const registration = ui.loadSources();
+  replyWithSummary(0);
+  await registration;
+  assert.equal(bPanel.stage, "UNBUILT");
+  assert.equal(detailCalls.length, 1, "registering C should keep the cache for B");
+  const oldAPanel = {};
+  open(a, oldAPanel);
+
+  ui.pollRefresh();
+  await flush();
+  assert.equal(detailCalls[1].signal.aborted, true);
+  assert.equal(summaries.length, 2);
+  assert.equal(bPanel.stage, undefined, "stale progress should be removed before the summary replies");
+  assert.equal(detailCalls[2].path, "/sources/2", "open B should reload without waiting for the summary");
+  const summaryError = {code: "TEMP", message: "summary temporarily unavailable"};
+  if (summaryOutcome === "superseded") {
+    const latestSummary = ui.loadSources();
+    replyWithSummary(1);
+    summaries[2].reject(summaryError);
+    await latestSummary;
+  } else if (summaryOutcome === "failed") {
+    summaries[1].reject(summaryError);
+  } else {
+    replyWithSummary(1);
+  }
+  await flush();
+  assert.equal(ui.state.sourcesLoadFailed, summaryOutcome !== "ok");
+  const summariesAfterTerminal = summaries.length;
+  assert.deepEqual(detailCalls.map(call => call.path), ["/sources/2", "/sources/1", "/sources/2"],
+    "a scoped refresh of A must fetch current progress for open B");
+  detailCalls[1].resolve({body: detail("UNBUILT")});
+  detailCalls[2].resolve({body: detail("SEARCHABLE")});
+  await flush();
+  assert.equal(oldAPanel.stage, undefined);
+  assert.equal(ui.state.sourceDetails["1"], undefined);
+  assert.equal(bPanel.stage, "SEARCHABLE");
+
+  ui.pollRefresh();
+  await flush();
+  assert.equal(summaries.length, summariesAfterTerminal,
+    "a terminal status for the same refresh must not reload again");
+  assert.equal(detailCalls.length, 3);
+  assert.equal(Object.keys(ui.state.sourceDetailRequests).length, 0);
+
+  terminal = {...terminal, refresh_id: "round-2"};
+  ui.pollRefresh();
+  await flush();
+  assert.equal(summaries.length, summariesAfterTerminal + 1);
+  replyWithSummary(summariesAfterTerminal);
+  await flush();
+  assert.equal(detailCalls[3].path, "/sources/2");
+  detailCalls[3].resolve({body: detail("SEARCHABLE")});
+  await flush();
+  assert.equal(Object.keys(ui.state.sourceDetailRequests).length, 0);
+})().catch(error => { console.error(error); process.exitCode = 1; });
+"""
+    result = subprocess.run(
+        [node, "-e", script, mode, terminal_state, summary_outcome],
+        cwd=Path(__file__).resolve().parents[2],
+        capture_output=True, text=True, encoding="utf-8", timeout=10,
+    )
+    assert result.returncode == 0, result.stderr

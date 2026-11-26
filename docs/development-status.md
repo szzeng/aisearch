@@ -4,7 +4,7 @@
 
 ## Current task: P4-CATALOG-CONCURRENCY-A1（2026-11-27）
 
-**A1 IMPLEMENTED / VALIDATION PENDING**。图库明细按来源单飞并保留有效缓存，入口有界等待并在实际 Future 结束后释放容量。空范围复用只读快照和位置计数，读 SQL 13→8（无模型合成臂）。最终受影响 JUnit 400/400，含 A0 7/7 和真实 HTTP 断开/关闭回归；前端定向 3/3。已观察合成图库真实页面、窄窗口和排队，用户停止 Computer Use 后，页面失败/重试由自动测试覆盖，未现场复验。独立完整受影响面审查待办。 [任务卡](tasks/P4-SOURCE-DETAIL-STABILITY.md#a1--图库明细读取与前台响应) · [执行报告](reports/P4-CATALOG-CONCURRENCY-A1.md)
+**A1 IMPLEMENTED / VALIDATION PENDING**。共享照片跨来源明细失效和摘要失败后旧统计残留两项 P2 已修复。Terra High 最终独立复核 `REVIEW PASS`，定向重跑 9/9，退出码 0。续修受影响组合 161 通过、11 个既有前端断言失败，失败节点与基线一致。A1 浏览器失败与重试已有自动回归，仍待现场验收。 [任务卡](tasks/P4-SOURCE-DETAIL-STABILITY.md#a1--图库明细读取与前台响应) · [执行报告](reports/P4-CATALOG-CONCURRENCY-A1.md)
 
 ## Previous task: P4-CATALOG-CONCURRENCY-A0（2026-11-26）
 

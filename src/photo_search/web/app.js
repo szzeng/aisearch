@@ -66,6 +66,7 @@
     sourceDetailQueue: [],
     sourceDetailActive: null,
     sourceDetailGeneration: 0,
+    sourceDetailRefreshId: null,
     sourcePathsById: {},
     sourcePathsLoaded: false,
     sourcePathsError: false,
@@ -1804,10 +1805,18 @@
           return;
         }
         state.refreshTimer = null;
-        if (finished) {
+        if (finished && (!body.refresh_id || body.refresh_id !== state.sourceDetailRefreshId)) {
+          state.sourceDetailRefreshId = body.refresh_id || null;
           state.browse.loaded = false;
-          invalidateSourceDetails(Array.isArray(body.source_ids) ? body.source_ids :
-            state.sources.map(function (source) { return source.source_id; }));
+          // Progress for a shared asset can change in sources outside the refresh scope.
+          var trackedDetails = new Set([
+            ...Object.keys(state.sourceDetails),
+            ...Object.keys(state.sourceDetailRequests),
+            ...Object.keys(state.sourceDetailFailures),
+          ]);
+          invalidateSourceDetails(trackedDetails);
+          // Replace stale visible statistics even if the summary request fails or is superseded.
+          if (trackedDetails.size && !els.views.sources.hidden) renderSources();
           loadSources();
         }
       })
