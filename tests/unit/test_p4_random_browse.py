@@ -7,13 +7,15 @@ import subprocess
 from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
-from photo_search.api import random_browse
+from photo_search.api import queries, random_browse
 from photo_search.api.errors import ApiError
 from photo_search.api.queries import random_asset_summaries
 from photo_search.api.random_browse import sample_asset_ids, validate_ids
+from photo_search.taken_time import contract as time_contract
 
 
 class MiniCatalog:
@@ -23,6 +25,9 @@ class MiniCatalog:
         self.query_log: list[str] = []
         self.connection.executescript(
             """
+            CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT);
+            INSERT INTO metadata VALUES ('taken_time_rules_version', '1');
+            CREATE TABLE asset_metadata(asset_id INTEGER PRIMARY KEY, taken_at_sort INTEGER, time_source TEXT);
             CREATE TABLE assets(asset_id INTEGER PRIMARY KEY, sha256 TEXT, byte_size INTEGER, created_at INTEGER);
             CREATE TABLE source_roots(source_id INTEGER PRIMARY KEY, display_name TEXT);
             CREATE TABLE file_locations(location_id INTEGER PRIMARY KEY, asset_id INTEGER, source_id INTEGER,
@@ -156,13 +161,78 @@ def test_recent_exclusion_releases_old_ids_only_when_candidate_pool_is_small() -
     assert len(set(only_one["asset_ids"])) == 2
 
 
-def test_random_summary_rechecks_scope_presence_and_preserves_sample_order() -> None:
+def test_random_summary_rechecks_scope_presence_and_preserves_sample_order(monkeypatch) -> None:
+    monkeypatch.setattr(queries, "resolve_present_locations", lambda *_: [])
     catalog = MiniCatalog()
     cards = random_asset_summaries(catalog, EmptyMediaCache(), [654, 652, 1, 653], source_id=None)
     assert [card["asset_id"] for card in cards] == [654, 1]
     assert cards[1]["location_count"] == 3
     scoped = random_asset_summaries(catalog, EmptyMediaCache(), [1, 654], source_id=1)
     assert [card["asset_id"] for card in scoped] == [1]
+
+
+
+def test_random_summary_time_priority_and_bounded_reads(monkeypatch) -> None:
+    catalog = MiniCatalog()
+    key = time_contract.parse_bound("2020-01-02T03:04:05", field="from")
+    catalog.connection.executemany("INSERT INTO asset_metadata VALUES (?,?,?)", [
+        (1, key, "EXIF_ORIGINAL"), (2, key, "EXIF_ROOT"), (3, key, "FILE_MTIME")])
+    catalog.connection.commit()
+    calls = []
+    class File:
+        def stat(self):
+            return SimpleNamespace(st_birthtime_ns=1_600_000_000_000_000_000, st_ctime_ns=1)
+    def resolve(_catalog, asset_id):
+        calls.append(asset_id)
+        return [SimpleNamespace(absolute_path=File())] if asset_id == 2 else []
+    monkeypatch.setattr(queries, "resolve_present_locations", resolve)
+    cards = random_asset_summaries(catalog, EmptyMediaCache(), [3, 1, 2], source_id=None)
+    assert [card["asset_id"] for card in cards] == [3, 1, 2]
+    assert [card["display_time"]["source"] for card in cards] == ["unknown", "capture", "creation"]
+    assert cards[1]["display_time"]["value"] == "2020-01-02T03:04:05.000"
+    assert calls == [3, 2]
+    assert sum("FROM asset_metadata" in sql for sql in catalog.query_log) == 1
+    assert all(set(card["display_time"]) == {"source", "value"} for card in cards)
+    assert all("created_at" not in card for card in cards)
+
+
+def test_random_summary_ignores_posix_ctime(monkeypatch) -> None:
+    catalog = MiniCatalog()
+    class File:
+        def stat(self):
+            return SimpleNamespace(st_ctime_ns=1_600_000_000_000_000_000)
+    monkeypatch.setattr(queries, "resolve_present_locations", lambda *_: [SimpleNamespace(absolute_path=File())])
+    monkeypatch.setattr(queries, "OS_NAME", "posix")
+    assert random_asset_summaries(catalog, EmptyMediaCache(), [1], source_id=None)[0]["display_time"] == {
+        "source": "unknown", "value": None}
+    monkeypatch.setattr(queries, "OS_NAME", "nt")
+    assert random_asset_summaries(catalog, EmptyMediaCache(), [1], source_id=None)[0]["display_time"]["source"] == "creation"
+
+
+def test_random_time_ignores_stale_rules_and_tries_next_location(monkeypatch) -> None:
+    catalog = MiniCatalog()
+    catalog.connection.execute("UPDATE metadata SET value='999' WHERE key='taken_time_rules_version'")
+    catalog.connection.execute("INSERT INTO asset_metadata VALUES (1, 1, 'EXIF_ORIGINAL')")
+    catalog.connection.commit()
+    class Broken:
+        def stat(self):
+            raise OSError("unavailable")
+    class Available:
+        def stat(self):
+            return SimpleNamespace(st_birthtime_ns=1_600_000_000_000_000_000)
+    monkeypatch.setattr(queries, "resolve_present_locations", lambda *_: [
+        SimpleNamespace(absolute_path=Broken()), SimpleNamespace(absolute_path=Available())])
+    card = random_asset_summaries(catalog, EmptyMediaCache(), [1], source_id=None)[0]
+    assert card["display_time"]["source"] == "creation"
+
+
+def test_random_tile_time_does_not_change_regular_added_time() -> None:
+    app = (WEB / "app.js").read_text(encoding="utf-8")
+    tile = app.split("function buildTile(asset)", 1)[1].split("// --------------------------------------------------------------------- detail", 1)[0]
+    random_part, regular_part = tile.split('var meta = element("span", "meta", state.browse.mode === "random"', 1)[1].split(' : "资产 #"', 1)
+    assert "加入时间" not in random_part
+    assert all(label in random_part for label in ("拍摄时间", "创建时间", "时间未知"))
+    assert "加入时间" in regular_part
 
 
 def test_random_id_validation_rejects_invalid_and_oversized_payloads() -> None:

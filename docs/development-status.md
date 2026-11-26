@@ -1,4 +1,8 @@
-## Current task: P4-ORPHAN-ASSET-CLEANUP-FIX（2026-11-19）
+## Current task: P4-PHOTO-RANDOM-BROWSE-TIME（2026-11-26）
+
+**IMPLEMENTED / VALIDATION PENDING**：随机页按可信拍摄时间、受控文件创建时间、未知的顺序显示，普通列表保留加入时间；每页批量读取时间，仅对缺失者查受控位置。定向 JUnit 22/22；隔离真实浏览器检查与独立只读复核仍 PENDING，未访问真实图库。详见[任务卡](tasks/P4-PHOTO-RANDOM-BROWSE-TIME.md)和[报告](reports/P4-PHOTO-RANDOM-BROWSE-TIME.md)。
+
+## Previous task: P4-ORPHAN-ASSET-CLEANUP-FIX（2026-11-19）
 
 **IMPLEMENTED / SOL REVIEW PASS / BROWSER PENDING**：搜索默认 PRESENT；零位置资产经明确预览和确认后分批复核清理，复用持久 scope、屏障和向量删除协议。最终定向 169 项通过，增强 catalog 重开后的清理及索引组合 65 项通过；最终产品全量 3,879 项，23 个历史失败、52 skipped、无新增失败。按用户指定独立 Sol 完整影响面复核无剩余代码阻断项；内置浏览器真实页面验收仍待完成。未清理真实图库。详见[任务卡](tasks/P4-ORPHAN-ASSET-CLEANUP-FIX.md)和[报告](reports/P4-ORPHAN-ASSET-CLEANUP-FIX.md)。
 

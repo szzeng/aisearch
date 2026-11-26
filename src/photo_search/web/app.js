@@ -2858,7 +2858,9 @@
     }
     caption.appendChild(element("span", null, locationLine));
     var meta = element("span", "meta", state.browse.mode === "random"
-      ? "加入时间 " + formatMoment(asset.created_at) + " · " + asset.location_count + " 个位置"
+      ? (asset.display_time && asset.display_time.value
+        ? (asset.display_time.source === "capture" ? "拍摄时间 " : "创建时间 ") + asset.display_time.value.replace("T", " ")
+        : "时间未知") + " · " + asset.location_count + " 个位置"
       : "资产 #" + asset.asset_id + " · 加入时间 " + formatMoment(asset.created_at) + " · " + asset.location_count + " 个位置");
     caption.appendChild(meta);
     if (state.browse.mode !== "random" && captureConditionActive()) {

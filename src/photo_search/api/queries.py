@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import base64
 import binascii
+import datetime as dt
 import json
+from os import name as OS_NAME
 from typing import Any
 
 from photo_search.api.errors import INVALID_CURSOR, VALIDATION_ERROR, ApiError
+from photo_search.api.files import resolve_present_locations
 from photo_search.catalog import store
 from photo_search.catalog.errors import (
     ASSET_NOT_FOUND,
@@ -264,17 +267,42 @@ def random_asset_summaries(
         ) if ordered_ids else []
         found = {int(row["asset_id"]): row for row in rows}
         locations = locations_by_asset(catalog, ordered_ids)
-        return [
-            summarize_asset(
-                cache,
-                asset_id=asset_id,
-                sha256=str(found[asset_id]["sha256"]),
+        capture_times: dict[int, str] = {}
+        if ordered_ids and time_read.rules_version_matches(catalog.connection):
+            rows = catalog.read_all(
+                f"SELECT asset_id,taken_at_sort FROM asset_metadata WHERE asset_id IN ({placeholders}) "
+                "AND time_source IN ('EXIF_ORIGINAL','EXIF_DIGITIZED') AND taken_at_sort IS NOT NULL",
+                tuple(ordered_ids),
+            )
+            capture_times = {int(row["asset_id"]): time_contract.normalize_bound(int(row["taken_at_sort"]))
+                             for row in rows}
+        result = []
+        for asset_id in ordered_ids:
+            card = summarize_asset(
+                cache, asset_id=asset_id, sha256=str(found[asset_id]["sha256"]),
                 byte_size=int(found[asset_id]["byte_size"]),
                 created_at=int(found[asset_id]["created_at"]),
                 locations=locations.get(asset_id, []),
             )
-            for asset_id in ordered_ids
-        ]
+            value = capture_times.get(asset_id)
+            source = "capture" if value is not None else "unknown"
+            if value is None:
+                for location in resolve_present_locations(catalog, asset_id):
+                    try:
+                        info = location.absolute_path.stat()
+                        birth_ns = getattr(info, "st_birthtime_ns", None)
+                        if birth_ns is None and OS_NAME == "nt":
+                            birth_ns = getattr(info, "st_ctime_ns", None)
+                        if birth_ns is not None:
+                            value = dt.datetime.fromtimestamp(birth_ns / 1_000_000_000).isoformat(timespec="milliseconds")
+                            source = "creation"
+                            break
+                    except (OSError, OverflowError, ValueError):
+                        continue
+            card.pop("created_at")
+            card["display_time"] = {"source": source, "value": value}
+            result.append(card)
+        return result
 
 
 def _published(cache: MediaCache, spec: Any, sha256: str) -> bool:
