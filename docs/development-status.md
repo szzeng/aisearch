@@ -2,6 +2,11 @@
 
 **IMPLEMENTED / VALIDATION PENDING**：随机页按可信拍摄时间、受控文件创建时间、未知的顺序显示，普通列表保留加入时间；每页批量读取时间，仅对缺失者查受控位置。定向 JUnit 22/22；隔离真实浏览器检查与独立只读复核仍 PENDING，未访问真实图库。详见[任务卡](tasks/P4-PHOTO-RANDOM-BROWSE-TIME.md)和[报告](reports/P4-PHOTO-RANDOM-BROWSE-TIME.md)。
 
+## Next planned专项：P4-CATALOG-CONCURRENCY-STABILITY（2026-11-26）
+
+**PLANNED / NOT STARTED**：数据库并发与前台响应稳定性专项，统一诊断、分开实施、联合验收。工作包 A [P4-SOURCE-DETAIL-STABILITY](tasks/P4-SOURCE-DETAIL-STABILITY.md)：图库明细请求去重/缓存、未建库空 scope 快速路径、只读 Worker 与 SQL 诊断。工作包 B [P4-FOREGROUND-WRITE-FAIRNESS-A](tasks/P4-FOREGROUND-WRITE-FAIRNESS-A.md)：人物写操作线程隔离、前台写意图、后台安全批次让步及任务恢复。父任务：[P4-CATALOG-CONCURRENCY-STABILITY](tasks/P4-CATALOG-CONCURRENCY-STABILITY.md)。执行顺序为共享诊断 → A → B → 联合并发回归；两工作包不并行修改共享调度基础设施。本次仅提交任务规划文档，未修改产品代码、未运行测试。启动前须完成当前 P4-PHOTO-RANDOM-BROWSE-TIME 剩余验收及 P4-ORPHAN-ASSET-CLEANUP-FIX 尚未完成的浏览器验收。
+
+
 ## Previous task: P4-ORPHAN-ASSET-CLEANUP-FIX（2026-11-19）
 
 **IMPLEMENTED / SOL REVIEW PASS / BROWSER PENDING**：搜索默认 PRESENT；零位置资产经明确预览和确认后分批复核清理，复用持久 scope、屏障和向量删除协议。最终定向 169 项通过，增强 catalog 重开后的清理及索引组合 65 项通过；最终产品全量 3,879 项，23 个历史失败、52 skipped、无新增失败。按用户指定独立 Sol 完整影响面复核无剩余代码阻断项；内置浏览器真实页面验收仍待完成。未清理真实图库。详见[任务卡](tasks/P4-ORPHAN-ASSET-CLEANUP-FIX.md)和[报告](reports/P4-ORPHAN-ASSET-CLEANUP-FIX.md)。

@@ -1,8 +1,12 @@
-# P4-SOURCE-DETAIL-STABILITY — 新图库任务与统计明细卡顿及重复读取修复
+# P4-SOURCE-DETAIL-STABILITY — 新图库任务与统计明细卡顿及重复读取修复（工作包 A）
 
-建卡日期：2026-11-25。状态：**PLANNED / NEXT TASK**。基线：GitHub `master`，`22a47456738b95abbc867f60ec59fd13c14aa58c`。
+建卡日期：2026-11-25。状态：**PLANNED / WORK PACKAGE A**。原始审查基线：GitHub `master`，`22a47456738b95abbc867f60ec59fd13c14aa58c`；当前专项实施基线：`b334bd75a020108bf826e2790d2850290bf4210a`（2026-11-26）。
 
-本卡已由用户确认，排在当前 `P4-ORPHAN-ASSET-CLEANUP-FIX` 浏览器验收之后；当前任务尚未收口时不要并行开始本卡。仅建立任务卡，不代表已实现或已验证。
+父任务：[P4-CATALOG-CONCURRENCY-STABILITY](P4-CATALOG-CONCURRENCY-STABILITY.md)。并列工作包 B：[P4-FOREGROUND-WRITE-FAIRNESS-A](P4-FOREGROUND-WRITE-FAIRNESS-A.md)。
+
+本卡只负责图库明细的前端请求生命周期、只读 Worker、空 scope 和 SQL 读取成本；不负责 SQLite 写入优先级或后台 writer 调度。与工作包 B 属于同一专项，但分别实施、分别验收，最后进行联合并发测试。
+
+启动门槛：先完成当前 P4-PHOTO-RANDOM-BROWSE-TIME 剩余验收，以及 P4-ORPHAN-ASSET-CLEANUP-FIX 尚未完成的浏览器验收；专项启动后先完成父卡阶段 0 共享诊断，再执行 A。不得与未收口任务并行修改共享基础设施。仅建立/关联任务文档，不代表已实现或已验证。
 
 ## 1. 用户问题与目标
 
