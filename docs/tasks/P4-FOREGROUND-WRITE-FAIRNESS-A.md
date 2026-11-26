@@ -1,8 +1,15 @@
-# P4-FOREGROUND-WRITE-FAIRNESS-A — 前台写入优先与后台建库安全让步
+# P4-FOREGROUND-WRITE-FAIRNESS-A — 前台写入隔离与后台建库让步（工作包 B）
 
-建卡日期：2026-11-26。状态：**PLANNED / NOT STARTED**。实施基线：GitHub `master`，`b334bd75a020108bf826e2790d2850290bf4210a`。
+建卡日期：2026-11-26。状态：**B1 PLANNED / B2 PLANNED**。实施基线：GitHub `master`，`bfdba39f7c524a4454b33cceff25d027a830986b`。
 
-父任务：[P4-CATALOG-CONCURRENCY-STABILITY](P4-CATALOG-CONCURRENCY-STABILITY.md)。本卡是工作包 B；与工作包 A [P4-SOURCE-DETAIL-STABILITY](P4-SOURCE-DETAIL-STABILITY.md) 同属一个专项，但处理不同资源瓶颈。本卡只建立设计，不代表已经修改产品代码。
+父任务：[P4-CATALOG-CONCURRENCY-STABILITY](P4-CATALOG-CONCURRENCY-STABILITY.md)。本卡是工作包 B 的规划卡；工作包 A 为 [P4-SOURCE-DETAIL-STABILITY](P4-SOURCE-DETAIL-STABILITY.md)。
+
+本工作包拆分为两个先后实施的子任务：
+
+- **B1 人物写操作线程隔离**：[P4-CATALOG-CONCURRENCY-B1](P4-CATALOG-CONCURRENCY-B1.md)。先解决 async API 直接执行同步 PersonService 写操作、等待 SQLite 时阻塞事件循环的问题。
+- **B2 后台安全让步**：后续单独建立实施卡。只有在 B1 完成后，再根据真实事务边界决定是否需要前台写意图和后台批次让步。
+
+个人项目约束：优先最小改动和现有机制复用；使用独立合成图库和少量关键测试；不做无必要的全量压力测试、复杂调度系统或正式大型独立审查。B1 与 B2 分别验收，不同时修改共享调度基础设施。
 
 ## 1. 用户问题与目标
 
@@ -40,23 +47,11 @@
 
 只有证明某个路径存在竞争或不合理持锁时，才改该路径。
 
-### 3.2 阶段 B1：人物写操作离开 API event loop
+### 3.2 阶段 B1：人物写操作线程隔离
 
-把用户触发的人物写操作放到独立、受生命周期管理的写入 Worker 中执行。
+B1 的实施范围、线程归属、队列容量、取消和简单验收，以子任务卡 [P4-CATALOG-CONCURRENCY-B1](P4-CATALOG-CONCURRENCY-B1.md) 为准。
 
-设计要求：
-
-1. API handler 只做参数/身份验证、登记前台写意图、提交工作和 await 结果；不得在 event loop 直接调用同步 PersonService 写操作。
-2. 使用专用有界 worker（首选单写线程，因 SQLite 本身只有一个 writer），不要与只读 CATALOG_WORKERS 池共用，也不要使用无界的任意线程扩散。
-3. Worker 必须在线程内部打开 SQLite RW connection、构造 Catalog 和 PersonService、执行操作并在同一线程关闭。可参考 catalog_reads worker 的线程自有连接模式；不能把 API event loop 的 Catalog/connection 传入另一个线程。
-4. 连接打开必须使用现有 catalog 文件，禁止触发不必要迁移或新建空库；核对数据根 lease 和应用 shutdown 顺序。
-5. worker queue 必须有界。队列饱和时返回明确的可重试忙状态，不可无限排队或假装成功；容量和错误映射由现有 API 契约与基线测试确定。
-6. 请求在真正开始前取消，可安全取消排队项；操作已经开始后不得强行中断原子事务。断开连接/客户端取消时，服务端必须等待或安全收尾；客户端重试沿用 request_id/幂等语义，不能重复执行人物修改。
-7. 应用关闭时先停止接收新任务、取消未启动任务、等待已启动任务安全结束、关闭 worker-owned Catalog，再释放数据根 lease。关闭失败必须保留资源引用并允许重试，复用 A2 的生命周期原则。
-
-先盘点 PersonService 所有实际写入口和对应 API 路由，再将用户触发的人物变更作为一个完整切片迁移；至少核查 rename、merge、undo、人工人脸关联/修正、split 等当前存在的写入口。只迁移真实存在且属于用户触发的路径，不扩大到所有 API。
-
-人物读取是否也需要移出 event loop，先用耗时和 API 响应测试证明，不在本卡默认扩展。
+B1 只解决人物写操作离开 API event loop；不实现 foreground intent、不暂停后台批次，也不改变后台建库调度。B1 通过后，再评估是否需要执行下面的 B2。
 
 ### 3.3 阶段 B2：前台写意图与后台安全让步
 

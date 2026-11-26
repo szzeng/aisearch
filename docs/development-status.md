@@ -1,3 +1,7 @@
+## Next planned task: P4-CATALOG-CONCURRENCY-B1（2026-11-27）
+
+**PLANNED / NOT STARTED**：人物写操作线程隔离与 API 响应保护。把当前 async 路由中的同步 PersonService 写操作移至专用单写 Worker，使用线程自有 Catalog/SQLite 连接；保留人物事务、request_id 幂等和 undo 语义。只做独立合成图库的少量关键测试：SQLite writer 等待期间健康接口仍响应、锁释放后人物修改成功、线程连接归属正确、应用关闭无资源泄漏。不实施后台写入公平调度（后续 B2）。详见[任务卡](tasks/P4-CATALOG-CONCURRENCY-B1.md)和[工作包 B](tasks/P4-FOREGROUND-WRITE-FAIRNESS-A.md)。
+
 ## Current task: P4-CATALOG-CONCURRENCY-A1（2026-11-27）
 
 **A1 IMPLEMENTED / VALIDATION PENDING**。图库明细按来源单飞并保留有效缓存，入口有界等待并在实际 Future 结束后释放容量。空范围复用只读快照和位置计数，读 SQL 13→8（无模型合成臂）。最终受影响 JUnit 400/400，含 A0 7/7 和真实 HTTP 断开/关闭回归；前端定向 3/3。已观察合成图库真实页面、窄窗口和排队，用户停止 Computer Use 后，页面失败/重试由自动测试覆盖，未现场复验。独立完整受影响面审查待办。 [任务卡](tasks/P4-SOURCE-DETAIL-STABILITY.md#a1--图库明细读取与前台响应) · [执行报告](reports/P4-CATALOG-CONCURRENCY-A1.md)

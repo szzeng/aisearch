@@ -1,6 +1,6 @@
 # P4-CATALOG-CONCURRENCY-STABILITY — 数据库并发与前台响应稳定性专项
 
-建卡日期：2026-11-26。状态 **A0 SCOPED PASS / A1 IMPLEMENTED · VALIDATION PENDING / B PLANNED**。实施基线：GitHub `master`，`b334bd75a020108bf826e2790d2850290bf4210a`。
+建卡日期：2026-11-26。状态 **A0 SCOPED PASS / A1 IMPLEMENTED · VALIDATION PENDING / B1 PLANNED / B2 PLANNED**。当前实施基线：GitHub `master`，`bfdba39f7c524a4454b33cceff25d027a830986b`。
 
 本卡是专项父任务，只负责统一问题边界、诊断方案、执行顺序和联合验收。产品改动分别由工作包 A、B 承担。初始规划提交仅建立和关联任务文档。A0 的运行证据记录于下。
 
@@ -21,7 +21,7 @@ A0 是用户单独授权的 P0。用户指定 Terra High 替代 A0 默认 DS-H�
 | 工作包 | 任务卡 | 负责问题 | 状态 |
 |---|---|---|---|
 | A | [P4-SOURCE-DETAIL-STABILITY](P4-SOURCE-DETAIL-STABILITY.md) | 查询池锁序、图库明细读取卡顿、重复请求和 Worker 排队 | A0 SCOPED PASS。A1 IMPLEMENTED / VALIDATION PENDING |
-| B | [P4-FOREGROUND-WRITE-FAIRNESS-A](P4-FOREGROUND-WRITE-FAIRNESS-A.md) | 后台建库期间前台人物写入等待、后台连续写入竞争和 API 事件循环阻塞 | PLANNED |
+| B | [P4-FOREGROUND-WRITE-FAIRNESS-A](P4-FOREGROUND-WRITE-FAIRNESS-A.md) | 前台人物写入与后台建库并发治理 | B1 PLANNED（[人物写操作线程隔离](P4-CATALOG-CONCURRENCY-B1.md)）；B2 PLANNED（后台安全让步，后续单独建卡） |
 
 两个问题共享“后台工作不能拖垮前台响应”的产品目标，但不能混成一把数据库锁：
 
@@ -236,12 +236,11 @@ A、B 分别通过后，使用同一个独立合成 data root 进行联合验收
 
 ## 12. 执行顺序与停止条件
 
-1. 用户于 2026-11-26 确认 P4-PHOTO-RANDOM-BROWSE-TIME 与 P4-ORPHAN-ASSET-CLEANUP-FIX 的使用验收通过，并豁免随机浏览时间的独立复核。A1 前置门禁已通过。
-2. 阶段 0：共享诊断与修复前基线。
-3. 阶段 A：图库明细读取稳定性，单独实现与验收。
-4. 阶段 B：前台写入 Worker/意图协调/后台安全让步，单独实现与验收。
-5. 阶段 4：A+B 联合并发回归和独立审查。
+1. A1 已有 400/400 受影响测试和基础浏览器观察；按个人项目标准完成必要的简单收口，不追加大型审查或全量压力测试。
+2. 实施 B1：把真实用户触发的人物写操作移出 API event loop，使用线程自有 Catalog/SQLite 连接；以少量合成并发测试验证。
+3. B1 通过后，再根据实际后台事务边界决定是否实施 B2；不预先建设复杂协调器。
+4. B2 如有必要，完成后进行一次 A1+B1+B2 的小型联合合成回归。
 
-A、B 属于同一专项，但不并行修改共享调度基础设施。若阶段 0 证明 A 与 B 无共同改动点，也仍共享联合验收；若发现需要 schema、跨进程互斥或改变事务协议，先停下并取得单独确认。
+A、B1、B2 属于同一专项，但分别实施、分别验收。不得用全局锁替代 SQLite writer 机制；若需要 schema、跨进程互斥或改变人物/outbox 原子事务协议，先停下并取得单独确认。
 
 最终报告：docs/reports/P4-CATALOG-CONCURRENCY-STABILITY.md。报告完成后更新本父卡和 docs/development-status.md。任一必需验收未完成，保留 IMPLEMENTED / VALIDATION PENDING 或 BLOCKED，不得标记整体 PASS。
