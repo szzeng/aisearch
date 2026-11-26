@@ -1,180 +1,46 @@
-# P4-FOREGROUND-WRITE-FAIRNESS-A — 前台写入隔离与后台建库让步（工作包 B）
+# P4-FOREGROUND-WRITE-FAIRNESS-A — 前台写入与后台建库并发治理（工作包 B）
 
-建卡日期：2026-11-26。状态：**B1 PLANNED / B2 PLANNED**。实施基线：GitHub `master`，`bfdba39f7c524a4454b33cceff25d027a830986b`。
+状态：**B1 PLANNED / B2 CONDITIONAL**。个人项目简化规划。
+当前规划基线：`b4f826e579b0e731bab064f7be0ee50dd0768b1c`（2026-11-27）。
 
-父任务：[P4-CATALOG-CONCURRENCY-STABILITY](P4-CATALOG-CONCURRENCY-STABILITY.md)。本卡是工作包 B 的规划卡；工作包 A 为 [P4-SOURCE-DETAIL-STABILITY](P4-SOURCE-DETAIL-STABILITY.md)。
+父任务：[P4-CATALOG-CONCURRENCY-STABILITY](P4-CATALOG-CONCURRENCY-STABILITY.md)。
+工作包 A：[P4-SOURCE-DETAIL-STABILITY](P4-SOURCE-DETAIL-STABILITY.md)。
 
-本工作包拆分为两个先后实施的子任务：
+## 问题背景
 
-- **B1 人物写操作线程隔离**：[P4-CATALOG-CONCURRENCY-B1](P4-CATALOG-CONCURRENCY-B1.md)。先解决 async API 直接执行同步 PersonService 写操作、等待 SQLite 时阻塞事件循环的问题。
-- **B2 后台安全让步**：后续单独建立实施卡。只有在 B1 完成后，再根据真实事务边界决定是否需要前台写意图和后台批次让步。
+后台建库期间，前台修改人物名称曾出现长时间卡顿。代码已确认人物/人脸写入 async 路由直接调用同步 `PersonService`，其 `Catalog.write()` 等待会阻塞 API event loop。
 
-个人项目约束：优先最小改动和现有机制复用；使用独立合成图库和少量关键测试；不做无必要的全量压力测试、复杂调度系统或正式大型独立审查。B1 与 B2 分别验收，不同时修改共享调度基础设施。
+历史 P4-02U/V、P4-LOCK-CONTENTION-RECOVERY-A/B/C/D 和 P4-BUILD-STABILITY-A2 已覆盖部分 BUSY 重试、搜索追赶降级、扫描恢复、模型资源等待和 Worker 生命周期；应复用，不重复实现。
 
-## 1. 用户问题与目标
+## B1：人物写操作线程隔离
 
-用户报告：后台建库期间，前台修改人物名称，应用曾出现长时间无法响应且无法自行恢复的情况。后台阶段不确定，扫描、语义索引、人脸识别、OCR 都可能发生，不能预先只检查 semantic 阶段。
+实施卡：[P4-CATALOG-CONCURRENCY-B1](P4-CATALOG-CONCURRENCY-B1.md)。
 
-提供的日志中，人物标签 PUT 和随后的 persons/browse GET 最终返回 200 OK，缩略图请求有 200/304。日志没有请求耗时、SQLite holder、线程状态和事务时间，因此它不是“已证明死锁”的证据。
+目标：把用户触发的 PersonService 写操作移出 API event loop，使用一个专用单写 Worker 和线程自有 Catalog/SQLite connection。保留人物操作事务、幂等、undo、revision 和响应格式。
 
-目标：在任何受支持的后台建库阶段运行时，前台人物修改能够及时取得数据库写入机会；等待数据库不能阻塞 API event loop；前台完成后后台能够安全继续，且不丢失或重复任务。
+验收只做独立合成图库的少量关键测试：后台/测试连接持有 SQLite writer 时，人物写请求等待但健康接口仍响应；释放锁后人物修改成功；连接线程归属正确；应用关闭后无遗留 Worker/connection/lease。
 
-## 2. 当前代码证据与待验证点
+B1 不改变后台扫描、语义、人脸、OCR 的写入调度。
 
-已核对当前 master：
+## B2：后台安全让步（条件任务，暂不实施）
 
-- api/routes.py 的人物标签路由是 async handler，但直接调用 persons_of(request).rename。
-- persons_of(request) 使用当前 request Catalog 构造 PersonService；PersonService.rename 是同步函数，内部直接进入 Catalog.write。
-- Catalog.write 使用每个 Catalog 实例自己的 RLock；不同 Catalog/线程的连接不共享这个 Python 锁，跨连接 writer 竞争最终由 SQLite WAL 的单写者规则处理。
-- Catalog.write 已对 BEGIN IMMEDIATE 前 SQLITE_BUSY 做有限重试并在失败详情中记录等待方 PID/TID/thread name；现有 busy timeout 为 5 秒。成功路径尚无完整 BEGIN wait / transaction hold / COMMIT 分段诊断。不得把 SQL 体或 COMMIT 错误混入 BEGIN BUSY 重试。
-- 人物改名通过 person operation bundle、operation items 和 publish_derived 更新派生队列；这些写入属于既有原子事务边界。
-- IndexCoordinator.process_batch 的 apply 路径会在 SQLite 写事务持有期间完成 LanceDB upsert/delete 并更新 outbox 确认状态。不能将 Lance 写入和 SQLite 确认随意拆开。
-- 已有 P4-02U/V、P4-LOCK-CONTENTION-RECOVERY-A/B/C/D 与 P4-BUILD-STABILITY-A2 机制必须复用，不重复实现。
+只有 B1 完成后，若简单复现仍证明后台连续写事务会让前台人物写入长期等待，才建立 B2 实施卡。
 
-待验证：人物关联规模对事务持锁时长的影响；后台每个阶段的事务长度/批次间隙；哪些后台写入路径能安全地在事务前或完整批次间让步；同一进程外的其他 writer 对等待的影响。
+若确有必要，先选出实测最明显的一个后台写入路径，在完整事务/安全批次边界让步；确认有效后再决定是否扩展到其他阶段。优先复用已有任务调度和恢复机制。
 
-## 3. 工作范围
+必须保留：
+- 不强制中断正在执行的 SQLite 事务；
+- 不拆分人物操作原子事务；
+- 不拆分 LanceDB 写入与 SQLite outbox 确认协议；
+- 不新增全局互斥锁，不改变 WAL/busy_timeout；
+- 前台操作结束后后台能够继续。
 
-### 3.1 阶段 B0：调用链盘点与基线诊断
+如果 B1 后人物操作已能保持响应，且等待时间可接受，则 B2 可以不做，不为建立复杂协调器而建立协调器。
 
-先建立受控的操作分类和耗时证据：
+## 项目测试标准
 
-- Catalog.write 的 BEGIN 等待、事务体持锁、COMMIT、重试次数和 outcome。
-- 识别同一进程内活动 writer 的 PID/TID/thread name、role、stage/operation；跨进程 holder 不能确认时标记 unknown。
-- 对人物改名、合并、撤销、人工关联/修正等真实入口测量事务持锁时间。
-- 对后台扫描、绑定、语义/outbox、搜索投影、拍摄时间/GPS/地点、人脸、人脸详情和 OCR 写入路径建立实际调用清单。
-- 复用现有 search/catalog perf diagnostics；不新增持久化诊断表，不记录人物名称、照片路径或 SQL 展开文本。
+这是个人项目：用独立合成图库，做少量可重复的关键测试即可。优先验证真实问题路径，不跑全仓压力测试、不做 30 万图库性能认证、不要求正式大型 DS-H。若改动共享锁顺序、事务原子协议或通用 Worker 关闭机制，再针对性扩大审查。
 
-只有证明某个路径存在竞争或不合理持锁时，才改该路径。
+## 安全边界
 
-### 3.2 阶段 B1：人物写操作线程隔离
-
-B1 的实施范围、线程归属、队列容量、取消和简单验收，以子任务卡 [P4-CATALOG-CONCURRENCY-B1](P4-CATALOG-CONCURRENCY-B1.md) 为准。
-
-B1 只解决人物写操作离开 API event loop；不实现 foreground intent、不暂停后台批次，也不改变后台建库调度。B1 通过后，再评估是否需要执行下面的 B2。
-
-### 3.3 阶段 B2：前台写意图与后台安全让步
-
-设计一个进程内、按同一 catalog/data-root 身份共享的轻量协调器。它不是 SQLite 替代品，也不是覆盖整个程序的全局互斥锁。
-
-目标状态：
-
-- 前台人物写请求在进入 Worker 队列前登记 foreground intent。
-- 后台建库写入在安全事务/批次边界申请 background admission。
-- 有前台写等待时，后台不得开始新的普通写批次。
-- 已经开始的后台事务安全完成；不强制中断、不回滚已提交数据。
-- 前台事务完成后通过 Condition/Event 唤醒后台，后台自动继续。
-- 等待支持取消、停止和应用关闭；所有 token/counter 在成功、异常、取消时成对释放。
-- 协调器只在更新计数/状态时短暂持有 Condition lock；不得在 SQLite transaction、LanceDB 操作、模型推理或文件 I/O 期间持有 Python lock。
-- 不同数据根相互独立；同一数据根的 API、扫描和刷新连接能看到相同的进程内协调状态。
-- SQLite 仍是最终 writer lock authority；其他进程/旧版本/外部工具不受进程内协调器控制，继续由现有 BUSY/lease 机制保护。诊断不得声称跨进程公平性。
-
-实现前必须解决“前台意图到达与后台 BEGIN 之间”的竞态：后台必须先获得可追踪的批次 admission，再进入事务；前台到达后阻止后续批次。若 BEGIN 正在等待外部 writer，必须证明等待预算/取消/恢复不会使前台无限等待。
-
-前台优先不能导致后台永久饥饿。连续前台请求场景下，需要有可测的后台最大延期/公平策略；策略数值从阶段 B0 基线和既有产品响应预算推导，不在没有证据时随意设置常数。
-
-### 3.4 阶段 B3：后台写入安全边界审查
-
-按实际调用图逐项判断是否需要让步，不把“建库阶段”当成足够精确的写入边界：
-
-| 阶段 | 需审查的边界 |
-|---|---|
-| 文件扫描 | 每个位置/批次的短事务边界；文件枚举、stat、hash 应在事务外 |
-| 内容绑定 | 每个绑定批次提交后 |
-| 语义分类 | durable 分类页/任务入队事务边界 |
-| 语义索引 | 完整 outbox apply 批次之后 |
-| 搜索投影 | 每轮 catch-up/drain 的完整事务边界 |
-| 拍摄时间/GPS/地点 | 每个 job/result 批次提交后 |
-| 人脸 | 检测/推理在事务外；结果提交和索引发布的原子边界 |
-| 人脸详情 | 每个任务/批次提交后 |
-| OCR | 推理在事务外；结果提交、job/lease 控制边界 |
-
-要求：
-
-- 优先使用已有阶段/批次边界，不把单条业务事务拆成多个部分。
-- 不能在 LanceDB 已写入但 SQLite outbox 尚未确认的中间状态让步。
-- 不能让模型推理等待数据库时继续持有不必要的 BACKGROUND_MODEL_SLOT 或 ModelResourceGate。
-- 保留 P4-LOCK B/C 的扫描 RETRY_WAIT、取消、恢复和 lease 规则。
-- 保留 P4-02V 的搜索追赶 100ms 有界等待和 LAGGING 语义；本卡不改变它的维护预算。
-- lease heartbeat、任务恢复、关闭清理等控制写入不可被普通后台让步无限延迟。
-- 如果某个阶段没有安全边界或修改会改变事务/恢复协议，先停止并单独提出设计，不强行接入。
-
-## 4. 协调器设计验收
-
-用 Event/Barrier 构造确定性时序：
-
-1. 后台进入一个真实/合成的短写事务并持有 batch admission。
-2. 前台人物写请求登记 intent。
-3. 后台当前事务完成。
-4. 断言后台不开始下一批普通写事务，前台 worker 获得执行机会。
-5. 前台提交/回滚并释放 intent。
-6. 断言后台自动恢复，持久任务被继续处理且无重复。
-7. 注入前台取消、worker 异常、SQLite BUSY、后台停止和应用关闭，确认状态计数/连接/lease 正确。
-8. 连续前台写入时，验证后台在测量确定的上限内仍能取得批次机会。
-
-不得依赖随机 sleep 证明锁顺序；必要等待必须由 Event/Barrier 观察真实状态。
-
-## 5. 重点回归与联合场景
-
-### B 单项
-
-- 人物 rename/merge/undo/人工关联等实际写入口不阻塞 event loop。
-- 写入 Worker 使用线程自有 connection，且不与读 Worker 混用。
-- 现有 expected_revision、request_id replay、operation bundle、undo 和 publish_derived 结果逐项不变。
-- 活动事务不被中断；BEGIN BUSY 与 COMMIT/业务异常分类不变。
-- 前台 intent 可见；后台安全让步；前台完成后后台继续。
-- 后台在连续前台写入下仍有界进展。
-- 应用 shutdown/restart 不遗留线程、Future、Catalog 或数据根 lease。
-
-### 必须联合 P4-SOURCE-DETAIL-STABILITY
-
-使用独立合成图库同时执行：
-
-1. 两个未建库来源明细并发读取；
-2. 明细保持展开时登记第三个来源；
-3. 后台执行扫描、语义/outbox、模拟人脸和 OCR、时间/GPS/地点任务；
-4. 前台修改人物名称并打开人物相册/照片预览；
-5. 同时请求健康状态、来源摘要和普通读取；
-6. 前台结束后后台继续推进至队列收敛。
-
-必须证明 A 的只读 Worker 排队不会被 B 的写入协调器误判为 SQLite 写锁；B 的前台写意图也不能占用 A 的只读 Worker。
-
-## 6. 不变量与禁止事项
-
-- 不新增 Schema、表、索引、持久化调度状态或迁移。
-- 不改变 WAL、全局 busy_timeout 或 P4-02V 预算。
-- 不增加全局互斥锁；协调器只做进程内有界批次 admission。
-- 不跨线程复用 SQLite connection/Catalog。
-- 不强制中断已开始的事务。
-- 不拆分人物 authority/operation bundle/derived publication 的原子事务。
-- 不拆分 LanceDB upsert/delete 与 SQLite outbox 确认的原有协议。
-- 不改变 job_id、lease、input_revision、retry/attempt、人物关联和人工修改语义。
-- 不在持有模型资源锁或 SQLite writer transaction 时等待另一个资源。
-- 不扫描或访问用户真实照片库；只使用隔离合成文件和临时 catalog。
-- 不下载或加载真实模型；GPU 只使用 deterministic fake/stub。
-- 不重建 Windows EXE，不做 30 万容量承诺，不扩大成全站重构。
-
-## 7. 性能设计与停止条件（PERF-BOUNDED）
-
-- 修复前先测量人物操作等待、事务持锁、后台批次时长、明细 Worker 排队和 API event loop 响应。
-- 修复后使用相同合成数据和相同并发时序比较。
-- 前台请求到达后，等待时间应主要受当前已开始的单个安全后台批次及外部 SQLite writer 影响；后台不能连续追加普通批次。
-- 人物修改不得因等待 SQLite 而阻塞健康/轻量 API 响应。
-- 后台在前台流量持续存在时仍须有界进展。
-- 数值阈值从基线和既有项目预算确定；不以增加 timeout、降低统计准确性或减少工作量换取表面通过。
-- 任一方案需要改变 schema、outbox 原子确认、人物操作协议或跨进程 ownership 时，停止并请求单独确认。
-
-## 8. 验证范围与报告
-
-优先复用：
-- Catalog.write BUSY/BEGIN/COMMIT/rollback 相关测试；
-- P4-LOCK-CONTENTION-RECOVERY-A/B/C/D 受影响测试；
-- P4-BUILD-STABILITY-A2 Worker shutdown/lease 生命周期测试；
-- 人物生命周期、undo、revision、idempotency 和人工关联测试；
-- 扫描、refresh、semantic outbox/Lance recovery、OCR lease/heartbeat 测试；
-- API responsiveness 与 catalog worker lifecycle 测试；
-- P4-02V catch-up contention 回归。
-
-仅按实际 diff 扩大受影响集合，不因任务名称自动跑全仓。共享 Catalog.write、worker lifecycle、协调器或锁顺序有变化时，执行完整受影响面独立 DS-H 审查；涉及 ADR 原子性承诺时增加聚焦审查。
-
-最终报告归入父任务报告：docs/reports/P4-CATALOG-CONCURRENCY-STABILITY.md。父任务和本卡状态按真实测试更新。任何关键场景未验收，保持 IMPLEMENTED / VALIDATION PENDING 或 BLOCKED，不得标记 PASS。
+不访问真实照片库；不增加 Schema、表或索引；不改真实数据；不下载或加载模型；不重建 Windows EXE。任何涉及跨进程互斥、数据迁移或改变现有事务/恢复协议的方案，先停下单独确认。
