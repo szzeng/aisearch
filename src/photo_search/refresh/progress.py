@@ -202,14 +202,14 @@ def semantic_breakdown(
         f"j.state IN ({_placeholders(_LIVE_JOB_STATES)}) AS queued "
         "FROM jobs AS j JOIN assets AS a ON a.asset_id = CAST(j.subject_id AS INTEGER) "
         "AND a.sha256 = j.input_revision "
+        "JOIN scope AS s ON s.asset_id = a.asset_id "
         "WHERE j.subject_type = 'asset' AND j.task_type = ? AND j.processor_id = ? "
-        "AND a.asset_id IN (SELECT asset_id FROM scope) "
         "UNION ALL "
         "SELECT e.asset_id, 1, 0, 0 FROM index_entries AS e "
         "JOIN artifacts AS ar ON ar.artifact_id = e.artifact_id "
         "JOIN assets AS a ON a.asset_id = e.asset_id AND a.sha256 = ar.input_revision "
+        "JOIN scope AS s ON s.asset_id = e.asset_id "
         "WHERE e.space_id = ? AND e.generation_id = ? AND e.state = 'CONFIRMED' "
-        "AND e.asset_id IN (SELECT asset_id FROM scope)"
         "), per_asset AS ("
         "SELECT MAX(confirmed) AS confirmed, MAX(failed) AS failed, MAX(queued) AS queued "
         "FROM classified GROUP BY asset_id"
@@ -354,42 +354,37 @@ def ocr_enrichment_counts(catalog: Any, *, source_id: int | None) -> dict[str, i
     processors = tuple(ocr_contract.OCR_ACTIVE_PROCESSOR_IDS)
     processor_slots = _placeholders(processors)
     task = str(ocr_contract.OCR_TASK_TYPE)
+    # Materialize one short-circuit priority bucket per asset. A current OCR fact
+    # avoids all job probes; other assets stop at their highest-priority job state.
+    job_match = (
+        "EXISTS(SELECT 1 FROM jobs AS j WHERE j.subject_type = 'asset' "
+        "AND j.subject_id = CAST(a.asset_id AS TEXT) AND j.input_revision = a.sha256 "
+        "AND j.task_type = ? AND j.processor_id IN (" + processor_slots + ") "
+    )
+    buckets = ("RUNNING", "QUEUED", "RETRY_WAIT", "BLOCKED", "FAILED")
+    cases = " ".join(
+        "WHEN " + job_match + "AND j.state = '" + state + "') THEN " + str(index)
+        for index, state in enumerate(buckets, start=1)
+    )
     sql = (
-        f"WITH scoped AS ({scope}), classified AS ("
-        "SELECT a.asset_id, "
-        "EXISTS(SELECT 1 FROM asset_ocr_text AS t WHERE t.asset_id = a.asset_id "
-        "AND t.input_revision = a.sha256) AS has_result, "
-        "EXISTS(SELECT 1 FROM jobs AS j WHERE j.subject_type = 'asset' "
-        "AND j.subject_id = CAST(a.asset_id AS TEXT) AND j.input_revision = a.sha256 "
-        "AND j.task_type = ? AND j.processor_id IN (" + processor_slots + ") "
-        "AND j.state IN ('QUEUED', 'RUNNING', 'RETRY_WAIT')) AS has_pending, "
-        "EXISTS(SELECT 1 FROM jobs AS j WHERE j.subject_type = 'asset' "
-        "AND j.subject_id = CAST(a.asset_id AS TEXT) AND j.input_revision = a.sha256 "
-        "AND j.task_type = ? AND j.processor_id IN (" + processor_slots + ") "
-        "AND j.state = 'BLOCKED') AS has_blocked, "
-        "EXISTS(SELECT 1 FROM jobs AS j WHERE j.subject_type = 'asset' "
-        "AND j.subject_id = CAST(a.asset_id AS TEXT) AND j.input_revision = a.sha256 "
-        "AND j.task_type = ? AND j.processor_id IN (" + processor_slots + ") "
-        "AND j.state = 'FAILED') AS has_failed "
+        f"WITH scoped AS ({scope}), classified AS MATERIALIZED ("
+        "SELECT CASE WHEN EXISTS(SELECT 1 FROM asset_ocr_text AS t "
+        "WHERE t.asset_id = a.asset_id AND t.input_revision = a.sha256) THEN 0 "
+        + cases + " ELSE 6 END AS bucket "
         "FROM scoped AS s JOIN assets AS a ON a.asset_id = s.asset_id) "
         "SELECT COUNT(*) AS total, "
-        "SUM(CASE WHEN has_result THEN 1 ELSE 0 END) AS succeeded, "
-        "SUM(CASE WHEN NOT has_result AND has_pending THEN 1 ELSE 0 END) AS pending, "
-        "SUM(CASE WHEN NOT has_result AND NOT has_pending AND has_blocked THEN 1 ELSE 0 END) AS blocked, "
-        "SUM(CASE WHEN NOT has_result AND NOT has_pending AND NOT has_blocked AND has_failed "
-        "THEN 1 ELSE 0 END) AS failed "
-        "FROM classified"
+        "SUM(bucket = 0) AS succeeded, SUM(bucket = 1) AS running, "
+        "SUM(bucket = 2) AS queued, SUM(bucket = 3) AS retry_wait, "
+        "SUM(bucket = 4) AS blocked, SUM(bucket = 5) AS failed FROM classified"
     )
-    parameters = (
-        *scope_parameters,
-        task, *processors,
-        task, *processors,
-        task, *processors,
-    )
+    parameters = (*scope_parameters, *((task, *processors) * len(buckets)))
     row = catalog.read_one(sql, parameters)
     total = int(row["total"] or 0)
     succeeded = int(row["succeeded"] or 0)
-    pending = int(row["pending"] or 0)
+    running = int(row["running"] or 0)
+    queued = int(row["queued"] or 0)
+    retry_wait = int(row["retry_wait"] or 0)
+    pending = running + queued + retry_wait
     blocked = int(row["blocked"] or 0)
     failed = int(row["failed"] or 0)
     unattempted = max(total - succeeded - pending - blocked - failed, 0)
@@ -398,6 +393,9 @@ def ocr_enrichment_counts(catalog: Any, *, source_id: int | None) -> dict[str, i
         "succeeded": succeeded,
         "handled": succeeded + blocked + failed,
         "pending": pending,
+        "running": running,
+        "queued": queued,
+        "retry_wait": retry_wait,
         "failed": failed,
         "blocked": blocked,
         "unattempted": unattempted,
@@ -538,7 +536,7 @@ def source_progress(
                 counts = ocr_enrichment_counts(catalog, source_id=int(source_id))
             else:
                 counts = dict.fromkeys(
-                    ("total", "succeeded", "handled", "pending", "failed", "blocked", "unattempted", "attempted"), 0,
+                    ("total", "succeeded", "handled", "pending", "running", "queued", "retry_wait", "failed", "blocked", "unattempted", "attempted"), 0,
                 )
             runtime_available = bool(available.get("ocr", True))
             stage_state = _ocr_enrichment_state(counts)

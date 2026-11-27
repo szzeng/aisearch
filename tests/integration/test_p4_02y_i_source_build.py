@@ -1131,3 +1131,40 @@ def test_the_sources_page_carries_the_unified_build_and_sync_entries(tmp_path: P
         assert 'method: "DELETE"' in served["script"]
     finally:
         env.close()
+
+
+def test_activity_uses_confirmed_assets_not_outbox_event_delta(tmp_path: Path, monkeypatch: Any) -> None:
+    from photo_search.refresh.state import RefreshStatus
+
+    env = RefreshEnv.build(tmp_path, photos=3, adapter=StubPinnedAdapter(), manifest=MANIFEST)
+    original_build = semantic.build_index
+    original_activity = RefreshStatus.set_activity
+    expected = []
+    observed = []
+
+    def build_with_duplicate_events(catalog, **kwargs):
+        payload = original_build(catalog, **kwargs)
+        counts = pipeline._backlog_report(catalog, kwargs["expected_space_id"],
+                                          kwargs["expected_processor_id"], [1])
+        expected.append((counts["backlog_confirmed"], counts["backlog_total"]))
+        payload["drain"]["confirmed_delta"] = 999
+        return payload
+
+    def record_activity(self, **kwargs):
+        result = original_activity(self, **kwargs)
+        if kwargs.get("detail") == "encoding_images" and expected:
+            observed.append((self.snapshot()["activity"]["completed"],
+                             self.snapshot()["activity"]["total"]))
+        return result
+
+    monkeypatch.setattr(pipeline, "SEMANTIC_BATCH_LIMIT", 1)
+    monkeypatch.setattr(semantic, "build_index", build_with_duplicate_events)
+    monkeypatch.setattr(RefreshStatus, "set_activity", record_activity)
+    try:
+        run(env, mode="build", source_ids=[1])
+        assert len(expected) >= 2
+        assert observed == expected
+        card = source_payload(env, 1)["progress"]["stages"]["semantic"]
+        assert expected[-1] == (card["confirmed"], card["total"])
+    finally:
+        env.close()

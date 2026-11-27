@@ -1412,18 +1412,22 @@
       notes.push("已识别 " + String(stage.succeeded) + " 张");
     }
     if (Number(stage.failed) > 0) {
-      notes.push(String(stage.failed) + " 张失败");
+      notes.push(String(stage.failed) + " 张识别失败");
     }
     if (Number(stage.blocked) > 0) {
       notes.push(String(stage.blocked) + " 张受阻");
     }
-    if (Number(stage.pending) > 0) {
-      notes.push(String(stage.pending) + " 张处理中");
+    if (stage.running != null && stage.queued != null && stage.retry_wait != null) {
+      if (Number(stage.running) > 0) notes.push(String(stage.running) + " 张正在识别");
+      if (Number(stage.queued) > 0) notes.push(String(stage.queued) + " 张排队中");
+      if (Number(stage.retry_wait) > 0) notes.push(String(stage.retry_wait) + " 张等待重试");
+    } else if (Number(stage.pending) > 0) {
+      notes.push(String(stage.pending) + " 张等待处理或执行");
     }
     if (Number(stage.unattempted) > 0) {
       notes.push(String(stage.unattempted) + " 张待处理");
     }
-    var label = stage.state === "IN_PROGRESS" ? "处理中" :
+    var label = stage.state === "IN_PROGRESS" ? "进行中" :
       (stage.state === "PENDING" ? "待处理" :
         (stage.state === "BLOCKED" ? "受阻" :
           (stage.state === "COMPLETE" ? "已处理" :
@@ -1704,7 +1708,7 @@
 
   function refreshAgeText(status) {
     var observed = Number(
-      status && (status.progress_updated_at_ms || status.updated_at_ms || status.started_at_ms)
+      status && status.progress_updated_at_ms
     );
     if (!isFinite(observed) || observed <= 0) return "暂未报告";
     var age = Math.max(0, Date.now() - observed);
@@ -1716,7 +1720,17 @@
 
   function refreshActivityText(status) {
     var activity = status && status.activity;
-    if (!activity || typeof activity !== "object") return null;
+    if (status && status.running && status.worker_alive === false) {
+      return ["后台线程已退出，但状态仍标记为运行中，状态异常"];
+    }
+    if (!activity || typeof activity !== "object") {
+      if (!status || !status.running) return null;
+      var fallback = [REFRESH_STATE_TEXT[status.state] || "正在运行", "最近进度：" + refreshAgeText(status)];
+      if (Number(status.progress_updated_at_ms) > 0 && Date.now() - Number(status.progress_updated_at_ms) >= 30000) {
+        fallback.push("长时间无进度，请检查（不能据此判断死锁）。");
+      }
+      return fallback;
+    }
     var waiting = activity.waiting_reason === "MODEL_RESOURCE";
     var title = waiting ? "正在等待模型资源" : (REFRESH_ACTIVITY_TITLE[activity.phase] || "");
     if (!title) return null;
@@ -1736,10 +1750,10 @@
       lines.push("后台任务暂时让出资源，等待后继续。");
     } else if (
       status.running &&
-      Number(status.progress_updated_at_ms || status.updated_at_ms || status.started_at_ms) > 0 &&
-      Date.now() - Number(status.progress_updated_at_ms || status.updated_at_ms || status.started_at_ms) >= 30000
+      Number(status.progress_updated_at_ms) > 0 &&
+      Date.now() - Number(status.progress_updated_at_ms) >= 30000
     ) {
-      lines.push("当前仍在处理，暂不能判断是否异常。");
+      lines.push("长时间无进度，请检查（不能据此判断死锁）。");
     }
     return lines;
   }
@@ -3600,6 +3614,8 @@
   }
 
   var embeddingStatusRequest = null;
+  var embeddingStatusEpoch = 0;
+  var embeddingCandidateRefreshPending = false;
   var embeddingTaskPollTimer = null;
   var embeddingTaskPollRequest = null;
   var embeddingChecks = Object.create(null);
@@ -3637,8 +3653,10 @@
     var taskSignature = task
       ? [task.task_id || "", task.provider_id || "", task.status || ""].join("|")
       : "none";
-    if (embeddingTaskSignature !== null && embeddingTaskSignature !== taskSignature) clearEmbeddingChecks();
+    var changed = embeddingTaskSignature !== null && embeddingTaskSignature !== taskSignature;
+    if (changed) clearEmbeddingChecks();
     embeddingTaskSignature = taskSignature;
+    return changed;
   }
   function safeEmbeddingCode(value) {
     var code = String(value || "");
@@ -3731,38 +3749,112 @@
     });
     return parts.join("，");
   }
+  function refreshEmbeddingAfterMutation() {
+    // A status request already in flight may predate the mutation.
+    embeddingStatusEpoch += 1;
+    embeddingCandidateRefreshPending = true;
+    var pending = embeddingStatusRequest || Promise.resolve();
+    return pending.then(function () { return loadEmbeddingManagementStatus(true); });
+  }
+  function showCandidateActionError(provider, actionKey, failure) {
+    var area = document.getElementById("candidate-task-" + encodeURIComponent(provider.provider_id));
+    if (area && area._candidateKey === actionKey && area._candidateError) {
+      area._candidateError.textContent = describe(failure);
+    }
+  }
+  function renderCandidateTaskArea(provider, task, targetArea) {
+    var area = targetArea || document.getElementById("candidate-task-" + encodeURIComponent(provider.provider_id));
+    if (!area) return;
+    var activeTask = task && ["RUNNING", "PAUSE_REQUESTED", "PAUSED", "INTERRUPTED", "FAILED"].indexOf(task.status) >= 0;
+    var ownTask = task && task.provider_id === provider.provider_id;
+    var actionKey = [ownTask ? task.task_id : "", ownTask ? task.status : "", Boolean(activeTask), provider.installed, provider.index_state].join("|");
+    if (area._candidateKey === actionKey) {
+      area._candidateMessage.textContent = ownTask ? candidateBuildResultText(task) + "，已确认向量 " + Number(task.confirmed_entries || 0) : "";
+      return;
+    }
+    area.replaceChildren();
+    area._candidateKey = actionKey;
+    var message = document.createElement("p");
+    message.className = "hint";
+    if (ownTask) message.textContent = candidateBuildResultText(task) + "，已确认向量 " + Number(task.confirmed_entries || 0);
+    area._candidateMessage = message;
+    area.appendChild(message);
+    var errorMessage = document.createElement("p");
+    errorMessage.className = "hint";
+    area._candidateError = errorMessage;
+    area.appendChild(errorMessage);
+    if (!provider.installed || provider.index_state === "ORPHAN_TABLE") return;
+    var button = document.createElement("button");
+    button.type = "button";
+    if (ownTask && (task.status === "RUNNING" || task.status === "PAUSE_REQUESTED")) {
+      button.textContent = task.status === "RUNNING" ? "暂停" : "正在暂停…";
+      button.disabled = task.status === "PAUSE_REQUESTED";
+      button.addEventListener("click", function () {
+        request("/embedding-management/tasks/" + encodeURIComponent(task.task_id) + "/pause", {method:"POST"})
+          .then(refreshEmbeddingAfterMutation).catch(function (failure) { showCandidateActionError(provider, actionKey, failure); });
+      });
+    } else if (ownTask && ["PAUSED", "INTERRUPTED", "FAILED"].indexOf(task.status) >= 0) {
+      button.textContent = "继续建库";
+      button.addEventListener("click", function () {
+        request("/embedding-management/tasks/" + encodeURIComponent(task.task_id) + "/resume", {method:"POST"})
+          .then(refreshEmbeddingAfterMutation).catch(function (failure) { showCandidateActionError(provider, actionKey, failure); });
+      });
+    } else if (!activeTask) {
+      button.textContent = "开始建库";
+      button.addEventListener("click", function () {
+        if (!window.confirm("候选建库将临时独占模型资源；语义搜索可能等待或返回繁忙。确认开始？")) return;
+        var requestId = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
+        request("/embedding-management/providers/" + encodeURIComponent(provider.provider_id) + "/candidate-build", {
+          method:"POST", body:{request_id:requestId,exclusive_model_use_confirmed:true},
+        }).then(refreshEmbeddingAfterMutation).catch(function (failure) { showCandidateActionError(provider, actionKey, failure); });
+      });
+    } else return;
+    area.appendChild(button);
+  }
   function pollEmbeddingTaskProgress() {
     embeddingTaskPollTimer = null;
     if (state.currentView !== "sources" || document.hidden || embeddingTaskPollRequest) return;
+    var statusEpoch = embeddingStatusEpoch;
     embeddingTaskPollRequest = request("/embedding-management/task-progress")
       .then(function (result) {
+        if (statusEpoch !== embeddingStatusEpoch) return;
         var task = (result.body || {}).candidate_task;
-        observeEmbeddingTask(task);
-        if (task && ["RUNNING", "PAUSE_REQUESTED"].indexOf(task.status) >= 0) {
-          var activeEl = document.getElementById("active-search-model");
-          if (activeEl) activeEl.textContent = activeEl.textContent.replace(/；候选建库：[^；]*/, "") +
-            "；候选建库：" + task.status + "，已确认向量 " + Number(task.confirmed_entries || 0);
-          scheduleEmbeddingTaskPoll();
-        } else {
-          loadEmbeddingManagementStatus();
+        var changed = observeEmbeddingTask(task);
+        var body = state.embeddingManagementStatus || {};
+        (body.providers || []).forEach(function (provider) { renderCandidateTaskArea(provider, task); });
+        body.candidate_task = task || null;
+        if (changed || embeddingCandidateRefreshPending) {
+          embeddingCandidateRefreshPending = true;
+          Array.prototype.forEach.call(document.querySelectorAll(".embedding-switch-action"), function (button) { button.disabled = true; });
+          var pendingStatus = embeddingStatusRequest || Promise.resolve();
+          pendingStatus.finally(function () { return loadEmbeddingManagementStatus(true); });
         }
+        if (task && ["RUNNING", "PAUSE_REQUESTED"].indexOf(task.status) >= 0) scheduleEmbeddingTaskPoll();
       })
       .catch(function () { scheduleEmbeddingTaskPoll(); })
-      .finally(function () { embeddingTaskPollRequest = null; });
+      .finally(function () {
+        embeddingTaskPollRequest = null;
+        var task = state.embeddingManagementStatus && state.embeddingManagementStatus.candidate_task;
+        if (embeddingCandidateRefreshPending || (task && ["RUNNING", "PAUSE_REQUESTED"].indexOf(task.status) >= 0)) {
+          scheduleEmbeddingTaskPoll();
+        }
+      });
   }
   document.addEventListener("visibilitychange", function () {
     if (document.hidden) stopEmbeddingTaskPoll();
     else if (state.currentView === "sources") loadEmbeddingManagementStatus();
   });
-  function loadEmbeddingManagementStatus() {
+  function loadEmbeddingManagementStatus(candidateRefresh) {
     if (embeddingStatusRequest) return embeddingStatusRequest;
     var activeEl = document.getElementById("active-search-model");
     var listEl = document.getElementById("embedding-provider-list");
     var otherListEl = document.getElementById("embedding-provider-other-list");
     if (!activeEl || !listEl) return Promise.resolve();
+    embeddingStatusEpoch += 1;
     embeddingStatusRequest = request("/embedding-management/status")
       .then(function (result) {
         var body = result.body || {};
+        if (candidateRefresh === true) embeddingCandidateRefreshPending = false;
         state.embeddingManagementStatus = body;
         updateFirstUseGuide();
         observeEmbeddingTask(body.candidate_task || null);
@@ -3772,9 +3864,16 @@
             provider.space_id === active.space_id && provider.generation &&
             provider.generation.generation_id === active.generation_id;
         });
+        if (candidateRefresh !== true) {
         activeEl.textContent = active
           ? "当前搜索模型：" + String(activeProvider ? activeProvider.display_name : active.provider_id)
           : "当前没有活动搜索模型";
+        if (active && activeProvider) {
+          var indexLabels = {CHECK_REQUIRED: "待检查", PARTIAL: "部分完成或待修复", NO_GENERATION: "未建索引", ORPHAN_TABLE: "旧索引残留"};
+          activeEl.textContent += "；索引状态：" + (indexLabels[activeProvider.index_state] || "未知") +
+            "；有效向量：" + Number(activeProvider.generation.confirmed || 0);
+        }
+        }
         function renderProviders(target, providers) {
           target.replaceChildren();
           providers.forEach(function (provider) {
@@ -3818,7 +3917,9 @@
             : embeddingCheckMessage(checked);
           card.append(title, state, detail, checkStatus);
           var task = body.candidate_task;
-          var activeTask = task && ["RUNNING", "PAUSE_REQUESTED", "PAUSED", "INTERRUPTED", "FAILED"].indexOf(task.status) >= 0;
+          var taskArea = document.createElement("div");
+          taskArea.id = "candidate-task-" + encodeURIComponent(provider.provider_id);
+          card.appendChild(taskArea);
           if (provider.installed && provider.index_state !== "ORPHAN_TABLE") {
             var check = document.createElement("button");
             check.type = "button";
@@ -3876,6 +3977,7 @@
             if (checked && checked.state === "passed" && !provider.is_active) {
               var arrange = document.createElement("button");
               arrange.type = "button";
+              arrange.className = "embedding-switch-action";
               arrange.textContent = "安排切换";
               arrange.addEventListener("click", function () {
                 var offlineWarning = embeddingOfflineWarning(checked.body && checked.body.coverage);
@@ -3906,41 +4008,9 @@
               disabled.disabled = true;
             }
             card.appendChild(disabled);
-          } else if (activeTask && task.provider_id === provider.provider_id) {
-            if (task.status === "RUNNING") {
-              var pause = document.createElement("button");
-              pause.type = "button";
-              pause.textContent = task.status === "PAUSE_REQUESTED" ? "正在暂停…" : "暂停";
-              pause.disabled = task.status === "PAUSE_REQUESTED";
-              pause.addEventListener("click", function () {
-                request("/embedding-management/tasks/" + encodeURIComponent(task.task_id) + "/pause", {method:"POST"})
-                  .then(loadEmbeddingManagementStatus).catch(function (failure) { activeEl.textContent = describe(failure); });
-              });
-              card.appendChild(pause);
-            } else if (["PAUSED", "INTERRUPTED", "FAILED"].indexOf(task.status) >= 0) {
-              var resume = document.createElement("button");
-              resume.type = "button";
-              resume.textContent = "继续建库";
-              resume.addEventListener("click", function () {
-                request("/embedding-management/tasks/" + encodeURIComponent(task.task_id) + "/resume", {method:"POST"})
-                  .then(loadEmbeddingManagementStatus).catch(function (failure) { activeEl.textContent = describe(failure); });
-              });
-              card.appendChild(resume);
-            }
-          } else if (!activeTask) {
-            var start = document.createElement("button");
-            start.type = "button";
-            start.textContent = "开始建库";
-            start.addEventListener("click", function () {
-              if (!window.confirm("候选建库将临时独占模型资源；语义搜索可能等待或返回繁忙。确认开始？")) return;
-              var requestId = window.crypto && window.crypto.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + "-" + Math.random().toString(16).slice(2);
-              request("/embedding-management/providers/" + encodeURIComponent(provider.provider_id) + "/candidate-build", {
-                method:"POST", body:{request_id:requestId,exclusive_model_use_confirmed:true},
-              }).then(loadEmbeddingManagementStatus).catch(function (failure) { activeEl.textContent = describe(failure); });
-            });
-            card.appendChild(start);
           }
           target.appendChild(card);
+          renderCandidateTaskArea(provider, task, taskArea);
           });
         }
         var providers = body.providers || [];
@@ -3954,7 +4024,7 @@
         var transition = body.offline_transition || {};
         var pendingTransition = transition.pending;
         if (pendingTransition) {
-          activeEl.textContent += "；已安排停机操作：" + String(pendingTransition.kind || "未知") + "（退出并重新打开应用后执行）";
+          if (candidateRefresh !== true) activeEl.textContent += "；已安排停机操作：" + String(pendingTransition.kind || "未知") + "（退出并重新打开应用后执行）";
           var cancel = document.createElement("button");
           cancel.type = "button";
           cancel.textContent = "取消待执行操作";
@@ -3963,20 +4033,26 @@
               .then(loadEmbeddingManagementStatus).catch(function (failure) { activeEl.textContent = describe(failure); });
           });
           listEl.appendChild(cancel);
-        } else if (transition.last_result && transition.last_result.status) {
+        } else if (candidateRefresh !== true && transition.last_result && transition.last_result.status) {
           activeEl.textContent += "；最近停机操作：" + String(transition.last_result.status);
         }
         var task = body.candidate_task;
         if (task && ["RUNNING", "PAUSE_REQUESTED"].indexOf(task.status) >= 0) {
-          activeEl.textContent += "；候选建库：" + task.status + "，已确认向量 " + Number(task.confirmed_entries || 0);
           scheduleEmbeddingTaskPoll();
         } else if (task) {
           stopEmbeddingTaskPoll();
-          activeEl.textContent += "；" + candidateBuildResultText(task);
         } else stopEmbeddingTaskPoll();
       })
       .catch(function (failure) {
-        activeEl.textContent = "读取模型状态失败：" + describe(failure);
+        if (candidateRefresh !== true) activeEl.textContent = "读取模型状态失败：" + describe(failure);
+        else {
+          embeddingCandidateRefreshPending = true;
+          (state.embeddingManagementStatus && state.embeddingManagementStatus.providers || []).forEach(function (provider) {
+            var area = document.getElementById("candidate-task-" + encodeURIComponent(provider.provider_id));
+            if (area && area._candidateMessage) area._candidateMessage.textContent += "；模型状态更新失败，正在重试";
+          });
+          scheduleEmbeddingTaskPoll();
+        }
       })
       .finally(function () { embeddingStatusRequest = null; });
     return embeddingStatusRequest;

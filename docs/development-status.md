@@ -1,3 +1,7 @@
+## Current task: P4-BUILD-STATUS-ACCURACY-A（2026-11-27）
+
+**IMPLEMENTED / SOL REVIEW PASS / VALIDATION PENDING**。独立 Sol 全影响面复核发现的统计查询性能、候选状态与交互竞态已修复并复审通过；最终受影响组合 160 passed / 1 skipped。原组合 3 个失败在原始 HEAD 同样复现，未在最终组合重跑；原卡 DS-H 审查及实际任务状态浏览器验收仍待完成。未访问真实图库、未提交或发布。[任务卡](tasks/P4-BUILD-STATUS-ACCURACY-A.md) · [执行报告](reports/P4-BUILD-STATUS-ACCURACY-A.md)
+
 ## Previous task: P4-CATALOG-CONCURRENCY-B1（2026-11-27）
 
 **SCOPED PASS / TERRA HIGH REVIEW PASS**。12 个人物写路由迁入专用单写 Worker。合成库验证持锁时健康与人物详情仍响应、改名重放、满队列 503 和关闭清理。独立首轮 P2 已修复为 5 秒宽限后延迟清理，独立复跑 34/34，复审通过。定向 JUnit 225/225，Ruff、compileall、diff-check 通过。B2 仍以实测持续写锁饥饿为启动条件。[任务卡](tasks/P4-CATALOG-CONCURRENCY-B1.md) · [执行报告](reports/P4-CATALOG-CONCURRENCY-B1.md)

@@ -301,6 +301,7 @@ class LibraryRefresher:
         payload = idle_status(batch_size=self._batch_size) if status is None else status.snapshot()
         payload["accepted"] = bool(accepted)
         payload["running"] = bool(self._running)
+        payload["worker_alive"] = bool(self._thread is not None and self._thread.is_alive())
         payload["queued"] = bool(queued)
         payload["pending_builds"] = [
             list(ids) for ids, _profile in self._pending_builds if ids is not None

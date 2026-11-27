@@ -90,7 +90,7 @@ assert.equal(ui.sourceActionMode(progress), "refresh");
 assert.equal(ui.sourceActionMode({...progress, stages:{semantic:{state:"BUILDING"}}}), "continue");
 const failedOcr = {state:"COMPLETE", succeeded:0, failed:3, blocked:0, pending:0,
   unattempted:0, total:3, runtime_available:true};
-assert.equal(ui.ocrProgressText(failedOcr), "已处理（3 张失败）");
+assert.equal(ui.ocrProgressText(failedOcr), "已处理（3 张识别失败）");
 assert.equal(ui.sourceActionMode({...progress, stages:{semantic:{state:"SEARCHABLE"}, ocr:failedOcr}}), "refresh");
 const waitingOcr = {...failedOcr, state:"PENDING", failed:1, unattempted:2};
 assert.match(ui.ocrProgressText(waitingOcr), /待处理/);
@@ -255,7 +255,7 @@ assert.match(semanticActivity, /正在建立语义索引/);
 assert.match(semanticActivity, /当前阶段：图片编码/);
 assert.match(semanticActivity, /已完成：1200 \/ 5000/);
 assert.match(semanticActivity, /最近进度：35 秒前/);
-assert.match(semanticActivity, /暂不能判断是否异常/);
+assert.match(semanticActivity, /长时间无进度，请检查/);
 
 const waitingActivity = render({state:"ENRICHING",running:true,mode:"build",
   activity:{phase:"ocr",detail:"waiting_model",completed:18,total:40,
@@ -265,7 +265,7 @@ const waitingActivity = render({state:"ENRICHING",running:true,mode:"build",
 assert.match(waitingActivity, /正在等待模型资源/);
 assert.match(waitingActivity, /后台任务暂时让出资源，等待后继续/);
 assert.match(waitingActivity, /最近进度：10 秒前/);
-assert.doesNotMatch(waitingActivity, /暂不能判断是否异常/);
+assert.doesNotMatch(waitingActivity, /长时间无进度，请检查/);
 
 const legacyActivity = render({state:"SCANNING",running:true,mode:"refresh",source_ids:[1],
   counters:{sources_requested:1,sources_scanned:0,sources_failed:0}},

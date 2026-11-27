@@ -28,21 +28,27 @@ const nodes=new Map(),get=id=>{if(!nodes.has(id))nodes.set(id,new Element());ret
 const identity=()=>({provider_id:"qwen",display_name:"Qwen",installed:true,index_state:"CHECK_REQUIRED",processor_id:"proc1",space_id:"space1",
  generation_id:"gen1",profile_id:"profile1",is_active:false,generation:{generation_id:"gen1",profile_id:"profile1",confirmed:4}});
 let status={active_profile:null,providers:[identity()],candidate_task:null,offline_transition:{}};
-let checks=0,switches=[],confirms=[],confirmResult=false,nextCheck=null;
+let checks=0,switches=[],confirms=[],confirmResult=false,nextCheck=null,pollTask=null,statusReads=0,nextStatus=null,nextPause=null;
 const response=body=>Promise.resolve({status:200,ok:true,headers:{get:()=>"application/json"},json:()=>Promise.resolve(body)});
 const fetch=(url,options)=>{
-  if(url.endsWith("/embedding-management/status"))return response(status);
+  if(url.endsWith("/embedding-management/status")){statusReads++;if(nextStatus){const value=nextStatus;nextStatus=null;return value.promise;}return response(status);}
+  if(url.endsWith("/embedding-management/task-progress"))return response({candidate_task:pollTask});
+  if(url.endsWith("/qwen/candidate-build"))return response({status:"RUNNING"});
+  if(url.endsWith("/new-task/pause"))return nextPause.promise;
   if(url.endsWith("/qwen/check")){checks++;const result=nextCheck;nextCheck=null;return result.promise;}
   if(url.endsWith("/qwen/switch")){switches.push(JSON.parse(options.body));return response({status:"scheduled"});}
   throw new Error("unexpected request "+url+" "+options.method);
 };
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};};
-const document={readyState:"loading",cookie:"",hidden:false,addEventListener(){},getElementById:get,createElement:tag=>new Element(tag)};
+const document={readyState:"loading",cookie:"",hidden:false,addEventListener(){},getElementById(id){
+  for(const root of nodes.values()) {const found=root.findAll(node=>node.id===id); if(found.length)return found[0];}
+  return get(id);
+},querySelectorAll(selector){return selector===".embedding-switch-action" ? get("embedding-provider-list").findAll(node=>node.className==="embedding-switch-action") : [];},createElement:tag=>new Element(tag)};
 const window={clearTimeout(){},setTimeout(){return 1;},crypto:{randomUUID:()=>"request"},confirm:message=>{confirms.push(message);return confirmResult;}};
 const context={document,window,fetch,Promise,Date,Math,Number,String,Boolean,Object,Array,JSON,RegExp,isFinite,encodeURIComponent,console};
 let code=fs.readFileSync("src/photo_search/web/app.js","utf8").replace(
   '  if (document.readyState === "loading")',
-  '  globalThis.testUi={load:loadEmbeddingManagementStatus,checks:embeddingChecks,enter:enterEmbeddingManagementView};\n  if (document.readyState === "loading")');
+  '  globalThis.testUi={load:loadEmbeddingManagementStatus,checks:embeddingChecks,enter:enterEmbeddingManagementView,poll:pollEmbeddingTaskProgress,state};\n  if (document.readyState === "loading")');
 vm.createContext(context);vm.runInContext(code,context);const ui=context.testUi;
 const flush=async()=>{for(let i=0;i<8;i++)await new Promise(setImmediate);};
 const card=()=>get("embedding-provider-list").children[0];
@@ -115,15 +121,47 @@ const checkBody=(eligible,covered=4,required=4,offline=0)=>({status:"ok",provide
     job_progress:{failed:1,historical_failed:6974,errors:{SOURCE_FILE_MISSING:1}}};
   await ui.load();
   const activeModel=()=>get("active-search-model").textContent;
-  assert.match(activeModel(),/当前有效照片编码失败 1 张/);
-  assert.match(activeModel(),/历史失效任务 6974 条/);
-  assert.match(activeModel(),/源文件缺失 1 项/);
+  const taskText=()=>card().findAll(node=>node.className==="hint").map(node=>node.textContent).join(" ");
+  assert.match(taskText(),/当前有效照片编码失败 1 张/);
+  assert.match(taskText(),/历史失效任务 6974 条/);
+  assert.match(taskText(),/源文件缺失 1 项/);
+  assert.doesNotMatch(activeModel(),/候选建库/);
   assert.ok(buttons().some(button=>button.textContent==="继续建库"));
   status.candidate_task={task_id:"task1",provider_id:"qwen",status:"COMPLETED",
     job_progress:{failed:0,historical_failed:6974,errors:{}}};
   await ui.load();
-  assert.match(activeModel(),/候选建库结果：COMPLETED，历史失效任务 6974 条/);
-  assert.doesNotMatch(activeModel(),/当前有效照片编码失败/);
+  assert.match(taskText(),/候选建库结果：COMPLETED，历史失效任务 6974 条/);
+  assert.doesNotMatch(taskText(),/当前有效照片编码失败/);
+  assert.doesNotMatch(activeModel(),/候选建库/);
+  status.providers=[Object.assign(identity(),{generation:null,profile_id:null,index_state:"NO_GENERATION"})];
+  status.candidate_task={task_id:"poll-task",provider_id:"qwen",status:"RUNNING",confirmed_entries:1};
+  ui.state.currentView="sources"; await ui.load();
+  const priorPause=buttons().find(button=>button.textContent==="暂停");
+  pollTask={task_id:"poll-task",provider_id:"qwen",status:"RUNNING",confirmed_entries:2};
+  ui.poll(); await flush();
+  assert.equal(buttons().find(button=>button.textContent==="暂停"),priorPause,"unchanged action retains focusable button");
+  const readsBefore=statusReads;
+  status.providers=[identity()];
+  status.candidate_task=pollTask={task_id:"poll-task",provider_id:"qwen",status:"COMPLETED",confirmed_entries:4};
+  const activeBefore=activeModel();
+  ui.poll(); await flush();
+  assert.ok(statusReads>readsBefore,"completion refreshes authoritative provider identity");
+  assert.match(card().children[2].textContent,/有效向量：4/);
+  assert.equal(activeModel(),activeBefore,"candidate polling does not rewrite active status");
+  status.candidate_task=null; await ui.load();
+  const priorStatus=deferred(); nextStatus=priorStatus; const staleLoad=ui.load();
+  confirmResult=true;
+  buttons().find(button=>button.textContent==="开始建库").fire("click");
+  await flush();
+  status.candidate_task={task_id:"new-task",provider_id:"qwen",status:"RUNNING"};
+  priorStatus.resolve({status:200,ok:true,headers:{get:()=>"application/json"},json:()=>Promise.resolve({...status,candidate_task:null})});
+  await staleLoad; await flush();
+  assert.ok(buttons().some(button=>button.textContent==="暂停"),"post-mutation read replaces pre-mutation in-flight status");
+  const pausePending=deferred(); nextPause=pausePending;
+  buttons().find(button=>button.textContent==="暂停").fire("click");
+  await ui.load();
+  pausePending.reject({code:"PAUSE_FAILED"}); await flush();
+  assert.match(taskText(),/PAUSE_FAILED/,"late pause error remains visible after same-state redraw");
   ui.enter("browse");assert.equal(Object.keys(ui.checks).length,0,"entering the page again clears transient conclusions");
 
   status.providers=[Object.assign(identity(),{generation:null,generation_id:"gen1",profile_id:null,index_state:"NO_GENERATION"})];

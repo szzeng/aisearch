@@ -601,8 +601,6 @@ def _semantic_stage(
         retry_failed=False,
     )
     targets = len(selection["targets"])
-    semantic_total = max(required, targets)
-    semantic_completed = min(int(report["confirmed"]), semantic_total)
     if targets == 0 and bool(selection["coverage_complete"]):
         if not semantic.generation_published(
             catalog, space_id=space_id, processor_id=str(spec.processor_id)
@@ -644,6 +642,9 @@ def _semantic_stage(
             "batches": 0,
             **_content_report(catalog, space_id, content_delta, spec),
         }
+    initial_backlog = _backlog_report(catalog, space_id, str(spec.processor_id), [None])
+    semantic_total = initial_backlog["backlog_total"]
+    semantic_completed = initial_backlog["backlog_confirmed"]
     try:
         status.set_activity(
             phase="semantic",
@@ -687,7 +688,6 @@ def _semantic_stage(
             batches = 0
             encoded = 0
             cursor = 0
-            confirmed_this_run = 0
             last: dict[str, Any] | None = None
             status.set_activity(
                 phase="semantic",
@@ -716,10 +716,9 @@ def _semantic_stage(
                     cursor = int(payload["after_asset_id"])
                     batches += 1
                     encoded += int(payload["targets"])
-                    confirmed_this_run += int(payload["drain"].get("confirmed_delta", 0))
-                    semantic_completed = min(
-                        semantic_total, semantic_completed + confirmed_this_run
-                    )
+                    backlog = _backlog_report(catalog, space_id, str(spec.processor_id), [None])
+                    semantic_total = backlog["backlog_total"]
+                    semantic_completed = backlog["backlog_confirmed"]
                     status.set_activity(
                         phase="semantic",
                         detail="encoding_images",
@@ -727,7 +726,6 @@ def _semantic_stage(
                         total=semantic_total,
                         cycle=semantic_cycle,
                     )
-                    confirmed_this_run = 0
                     last = payload
                     if bool(payload["coverage_complete"]) or int(payload["targets"]) == 0:
                         break
@@ -1092,7 +1090,6 @@ def _semantic_build_stage(
                 resources.callback(encoder_release)
             encoded = 0
             batches = 0
-            confirmed_this_run = 0
             last: dict[str, Any] | None = None
             status.set_activity(
                 phase="semantic",
@@ -1124,10 +1121,9 @@ def _semantic_build_stage(
                         cursor = int(payload["after_asset_id"])
                         batches += 1
                         encoded += int(payload["targets"])
-                        confirmed_this_run += int(payload["drain"].get("confirmed_delta", 0))
-                        semantic_completed = min(
-                            semantic_total, semantic_completed + confirmed_this_run
-                        )
+                        backlog = _backlog_report(catalog, space_id, processor_id, scopes)
+                        semantic_total = backlog["backlog_total"]
+                        semantic_completed = backlog["backlog_confirmed"]
                         status.set_activity(
                             phase="semantic",
                             detail="encoding_images",
@@ -1135,7 +1131,6 @@ def _semantic_build_stage(
                             total=semantic_total,
                             cycle=semantic_cycle,
                         )
-                        confirmed_this_run = 0
                         last = payload
                         if bool(payload["coverage_complete"]):
                             break

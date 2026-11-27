@@ -615,6 +615,7 @@ class LibraryRefreshStatus(BaseModel):
     state: str
     accepted: bool = False
     running: bool = False
+    worker_alive: bool | None = None
     #: Scoped builds waiting behind the active run, in FIFO order (process-local).
     queued: bool = False
     pending_builds: list[list[int]] = Field(default_factory=list)

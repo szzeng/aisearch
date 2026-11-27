@@ -87,7 +87,7 @@ class RefreshStatus:
             "batch_size": int(batch_size),
             "started_at_ms": int(started_at_ms),
             "updated_at_ms": int(started_at_ms),
-            "progress_updated_at_ms": int(started_at_ms),
+            "progress_updated_at_ms": None,
             "finished_at_ms": None,
             "activity": None,
             "stages": {},
@@ -147,7 +147,8 @@ class RefreshStatus:
             previous = self._data.get("activity")
             previous = previous if isinstance(previous, Mapping) else {}
             if (
-                previous.get("phase") == str(phase)
+                str(phase) != "semantic"
+                and previous.get("phase") == str(phase)
                 and previous.get("cycle") == cycle
                 and previous.get("source_index") == source_index
                 and previous.get("total") == total
@@ -175,7 +176,10 @@ class RefreshStatus:
             if cycle is not None:
                 activity["cycle"] = str(cycle)
             self._data["activity"] = activity
-            if mark_progress:
+            progressed = any(previous.get(key) != activity.get(key) for key in (
+                "phase", "detail", "completed", "total", "source_index", "cycle"
+            ))
+            if mark_progress and progressed:
                 self._data["progress_updated_at_ms"] = observed
             if self._now_ms is not None:
                 self._data["updated_at_ms"] = observed
