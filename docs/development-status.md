@@ -1,6 +1,6 @@
 ## Current task: P4-FOREGROUND-API-WRITE-ISOLATION-A（2026-11-27）
 
-**STOPPED / DESIGN AND VALIDATION PENDING**。扫描写入跨越关停宽限期时，现有关闭流程可能先关闭 Runner，导致登记后无法提交；涉及用户指定的关闭和 lease 停止条件。尚未改产品代码，完整路由盘点、实现及验收均未完成。详见[任务卡](tasks/P4-FOREGROUND-API-WRITE-ISOLATION-A.md)和[报告](reports/P4-FOREGROUND-API-WRITE-ISOLATION-A.md)。
+**STOPPED / SOL REVIEW CHANGES REQUIRED**。独立 Sol 发现扫描登记与执行共用线程违反 202/同源复用，以及扫描身份交接、关闭与 lease、登记删除竞态等问题；原候选未通过，删除来源等路径暂缓。未改产品代码、未运行产品测试；[任务卡](tasks/P4-FOREGROUND-API-WRITE-ISOLATION-A.md) · [设计报告](reports/P4-FOREGROUND-API-WRITE-ISOLATION-A.md) · [较小设计卡](tasks/P4-SCAN-RUNNER-REGISTRATION-DESIGN.md)。
 
 ## Current task: P4-BUILD-STATUS-ACCURACY-A（2026-11-27）
 

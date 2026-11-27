@@ -1,6 +1,6 @@
 # P4-FOREGROUND-API-WRITE-ISOLATION-A
 
-状态：**STOPPED / DESIGN AND VALIDATION PENDING**（2026-11-27）。基线 `a2059ad48f1f15a99cc89c3c3f8c4c9141fc2b17`。用户给定的任务范围、验收与停止条件见本次任务请求；本卡记录本次核查和恢复入口。[报告](../reports/P4-FOREGROUND-API-WRITE-ISOLATION-A.md)。
+状态：**STOPPED / DESIGN REVIEW PENDING**（2026-11-27）。基线 `a2059ad48f1f15a99cc89c3c3f8c4c9141fc2b17`。用户给定的任务范围、验收与停止条件见本次任务请求；本卡记录本次核查和恢复入口。[报告](../reports/P4-FOREGROUND-API-WRITE-ISOLATION-A.md)。
 
 ## 性能设计与验收
 
@@ -13,3 +13,11 @@
 扫描登记完成后必须提交现有 Runner；现有通用关闭在写 worker 超时后仍关闭 Runner，后者关闭后拒绝提交。新 worker 接受的扫描登记跨越宽限期时，直接按现有模式接入会导致已登记任务无法提交。需要设计跨 worker 的关停顺序，并核对 lease、失败重试及客户端取消；这触及用户指定的停止条件 4。静态分析尚未证明不存在完全局部的替代方案，不能声称已经确定唯一方案。尚未修改产品代码；完整路由盘点及全部验收均待做。
 
 恢复时先核对报告和当前代码，明确允许的生命周期协调方案后，完成全量实际路由盘点，再实施、定向验证与独立审查。不得自动启动 B2。
+
+## 设计复核进展（2026-11-27）
+
+已对挂载路由完成静态分类，提出 Runner 负责登记与执行、由 Runner 持有独立 CatalogWriteWorker 的候选；不修改通用 `ApiContext.close()` 和数据根 lease 的安全性尚需独立审查和故障验证。删除来源、智能刷新等跨执行器路径暂缓；已登记扫描仅有后续请求恢复的源码依据，自动重启恢复未证实。完整盘点、设计边界和测试计划见[报告](../reports/P4-FOREGROUND-API-WRITE-ISOLATION-A.md#2026-11-27-设计复核范围候选方案与待验证边界)。较小的[扫描设计卡](P4-SCAN-RUNNER-REGISTRATION-DESIGN.md)仅供复核，尚未接受或实施。原卡仍 STOPPED，不标 PASS；不启动 B2。
+
+## 独立 Sol 复核（2026-11-27）
+
+**REVIEW CHANGES REQUIRED / STOPPED**。独立复核发现单扫描线程登记不满足 202/同源复用、source ID 去重交接、关闭时后到 retention worker、来源登记/删除竞态等阻塞问题；恢复与路由表表述亦需修正。详见[报告](../reports/P4-FOREGROUND-API-WRITE-ISOLATION-A.md#独立-sol-复核2026-11-27)。原候选未通过，不实施。
