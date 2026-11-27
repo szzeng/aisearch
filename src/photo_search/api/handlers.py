@@ -40,7 +40,7 @@ def _redactor(request: Request) -> Redactor:
     context = getattr(request.app.state, "api", None)
     if context is None:  # pragma: no cover - only reachable for a foreign ASGI app
         return Redactor()
-    return context.redactor()
+    return context.error_redactor()
 
 
 async def _catalog_error(request: Request, error: CatalogError) -> JSONResponse:

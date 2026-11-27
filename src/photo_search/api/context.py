@@ -244,6 +244,15 @@ class ApiContext:
             result = self._person_write_worker.submit(operation, **parameters)
         return await asyncio.wrap_future(result)
 
+    async def run_foreground_write(self, operation: str, **parameters: Any) -> dict[str, Any]:
+        from photo_search.api.person_writes import catalog_write_busy
+
+        with self._lifecycle_lock:
+            if self._closed or self._person_write_worker is None:
+                raise catalog_write_busy()
+            result = self._person_write_worker.submit(operation, **parameters)
+        return await asyncio.wrap_future(result)
+
     async def drain_person_writes(self) -> None:
         """Give the writer an asynchronous grace period before regular shutdown takes over."""
         if (worker := self._person_write_worker) is not None and (thread := worker.stop()) is not None:
@@ -451,6 +460,13 @@ class ApiContext:
         try:
             service = self.service()
         except Exception:  # noqa: BLE001 - reporting must work even when the catalog is not
+            return Redactor(data_root=self.settings.data_root)
+        return Redactor.for_catalog(service.catalog, data_root=self.settings.data_root)
+
+    def error_redactor(self) -> Redactor:
+        """Redact errors without opening a service or retrying startup recovery."""
+        service = self._service
+        if service is None:
             return Redactor(data_root=self.settings.data_root)
         return Redactor.for_catalog(service.catalog, data_root=self.settings.data_root)
 

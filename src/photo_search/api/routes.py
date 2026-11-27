@@ -200,8 +200,6 @@ from photo_search.face.weights import weights_present as face_weights_present
 from photo_search.favorites import (
     favorite_states,
     list_favorites,
-    set_favorite,
-    set_favorites_batch,
 )
 from photo_search.geo import resolver as geo_resolver
 from photo_search.ingestion.service import CatalogService
@@ -967,7 +965,7 @@ async def rename_source(
     request: Request, source_id: int, payload: SourceRenameRequest
 ) -> dict[str, Any]:
     """Change only display metadata, including while this source is being built."""
-    return service_of(request).rename_source(int(source_id), display_name=payload.display_name)
+    return await context_of(request).run_foreground_write("source_rename", source_id=int(source_id), display_name=payload.display_name)
 
 
 @router.delete(
@@ -1145,17 +1143,17 @@ async def get_favorite_states(
 
 @router.put("/assets/{asset_id}/favorite", response_model=FavoriteWriteResponse, summary="Favorite a photo")
 async def put_favorite(request: Request, asset_id: int) -> dict[str, Any]:
-    return set_favorite(service_of(request).catalog, asset_id, favorite=True)
+    return await context_of(request).run_foreground_write("favorite", asset_id=asset_id, favorite=True)
 
 
 @router.delete("/assets/{asset_id}/favorite", response_model=FavoriteWriteResponse, summary="Unfavorite a photo")
 async def delete_favorite(request: Request, asset_id: int) -> dict[str, Any]:
-    return set_favorite(service_of(request).catalog, asset_id, favorite=False)
+    return await context_of(request).run_foreground_write("favorite", asset_id=asset_id, favorite=False)
 
 
 @router.post("/favorites/batch", response_model=FavoriteBatchResponse, summary="Set favorite state for photos")
 async def batch_favorites(payload: FavoriteBatchRequest, request: Request) -> dict[str, Any]:
-    return set_favorites_batch(service_of(request).catalog, payload.asset_ids, favorite=payload.is_favorite)
+    return await context_of(request).run_foreground_write("favorites_batch", asset_ids=payload.asset_ids, favorite=payload.is_favorite)
 
 
 @router.get("/photo-collections", summary="Paged ordinary photo collections")
@@ -1167,7 +1165,7 @@ async def list_photo_collections(request: Request, limit: int = Query(default=20
 
 @router.post("/photo-collections", summary="Create an ordinary photo collection")
 async def create_photo_collection(payload: PhotoCollectionCreateRequest, request: Request) -> dict[str, Any]:
-    return photo_collections.create_collection(service_of(request).catalog, payload.name, payload.create_request_id,
+    return await context_of(request).run_foreground_write("photo_collection_create", name=payload.name, request_id=payload.create_request_id,
         asset_ids=payload.asset_ids, require_present=payload.require_present)
 
 
@@ -1181,14 +1179,14 @@ async def get_photo_collection(request: Request, collection_id: int,
 @router.patch("/photo-collections/{collection_id}", summary="Rename an ordinary photo collection")
 async def patch_photo_collection(payload: PhotoCollectionRenameRequest, request: Request,
                                  collection_id: int) -> dict[str, Any]:
-    return photo_collections.rename_collection(service_of(request).catalog, collection_id,
+    return await context_of(request).run_foreground_write("photo_collection_rename", collection_id=collection_id,
         instance_token=payload.instance_token, expected_revision=payload.expected_revision, name=payload.name)
 
 
 @router.delete("/photo-collections/{collection_id}", summary="Delete an ordinary photo collection")
 async def delete_photo_collection(payload: PhotoCollectionDeleteRequest, request: Request,
                                   collection_id: int) -> dict[str, Any]:
-    return photo_collections.delete_collection(service_of(request).catalog, collection_id,
+    return await context_of(request).run_foreground_write("photo_collection_delete", collection_id=collection_id,
         instance_token=payload.instance_token, expected_revision=payload.expected_revision)
 
 
@@ -1636,7 +1634,7 @@ async def get_photo_collection_assets(request: Request, collection_id: int,
 @router.post("/photo-collections/{collection_id}/members/batch", summary="Edit ordinary photo collection members")
 async def edit_photo_collection_members(payload: PhotoCollectionMembersRequest, request: Request,
                                        collection_id: int) -> dict[str, Any]:
-    return photo_collections.edit_members(service_of(request).catalog, collection_id, payload.asset_ids,
+    return await context_of(request).run_foreground_write("photo_collection_members", collection_id=collection_id, asset_ids=payload.asset_ids,
         action=payload.action, instance_token=payload.instance_token, expected_revision=payload.expected_revision)
 
 
@@ -2828,7 +2826,7 @@ async def list_person_collections(
 async def create_person_collection(
     request: Request, payload: PersonCollectionNameRequest
 ) -> dict[str, Any]:
-    return person_collections.create_collection(service_of(request).catalog, payload.name)
+    return await context_of(request).run_foreground_write("person_collection_create", name=payload.name)
 
 
 @router.get("/persons/collections/{collection_id}/{instance_token}", summary="Read a person collection instance")
@@ -2844,8 +2842,8 @@ async def get_person_collection(
 async def patch_person_collection(
     request: Request, collection_id: int, instance_token: str, payload: PersonCollectionNameRequest
 ) -> dict[str, Any]:
-    return person_collections.rename_collection(
-        service_of(request).catalog, collection_id, payload.name, instance_token=instance_token
+    return await context_of(request).run_foreground_write(
+        "person_collection_rename", collection_id=collection_id, name=payload.name, instance_token=instance_token
     )
 
 
@@ -2853,8 +2851,8 @@ async def patch_person_collection(
 async def remove_person_collection(
     request: Request, collection_id: int, instance_token: str
 ) -> dict[str, Any]:
-    return person_collections.delete_collection(
-        service_of(request).catalog, collection_id, instance_token=instance_token
+    return await context_of(request).run_foreground_write(
+        "person_collection_delete", collection_id=collection_id, instance_token=instance_token
     )
 
 
@@ -2862,9 +2860,9 @@ async def remove_person_collection(
 async def edit_person_collection_members(
     request: Request, collection_id: int, instance_token: str, payload: PersonCollectionMembersRequest
 ) -> dict[str, Any]:
-    return person_collections.edit_members(
-        service_of(request).catalog,
-        collection_id,
+    return await context_of(request).run_foreground_write(
+        "person_collection_members",
+        collection_id=collection_id,
         instance_token=instance_token,
         action=payload.action,
         person_ids=payload.person_ids,
@@ -2886,8 +2884,8 @@ async def person_collection_faces(
 async def edit_person_collection_faces(
     request: Request, collection_id: int, instance_token: str, payload: PersonCollectionFaceMembersRequest
 ) -> dict[str, Any]:
-    return person_collections.edit_face_members(
-        service_of(request).catalog, collection_id, instance_token=instance_token,
+    return await context_of(request).run_foreground_write(
+        "person_collection_faces", collection_id=collection_id, instance_token=instance_token,
         action=payload.action, face_ids=payload.face_ids, expected_revision=payload.expected_revision,
         hide_after_add=payload.hide_after_add,
     )
@@ -2948,8 +2946,8 @@ async def person_photos(
 async def put_person_cover(
     request: Request, person_id: int, payload: PersonCoverRequest
 ) -> dict[str, Any]:
-    return person_albums.set_cover(
-        service_of(request).catalog,
+    return await context_of(request).run_foreground_write(
+        "person_cover",
         person_id=person_id,
         face_id=payload.face_id,
         expected_revision=payload.expected_revision,
@@ -3015,8 +3013,8 @@ async def face_inbox_hidden_group_faces(
 async def post_face_inbox_visibility(
     request: Request, payload: FaceInboxVisibilityRequest
 ) -> dict[str, Any]:
-    return person_albums.set_inbox_visibility(
-        service_of(request).catalog, face_ids=payload.face_ids, hidden=bool(payload.hidden),
+    return await context_of(request).run_foreground_write(
+        "inbox_visibility", face_ids=payload.face_ids, hidden=bool(payload.hidden),
         ignore_state=payload.ignore_state,
     )
 

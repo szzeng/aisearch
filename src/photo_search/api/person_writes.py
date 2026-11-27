@@ -33,6 +33,43 @@ _WRITE_OPERATIONS = frozenset({
 })
 
 
+_CATALOG_OPERATIONS = {
+    "favorite": ("favorites", "set_favorite"),
+    "favorites_batch": ("favorites", "set_favorites_batch"),
+    "photo_collection_create": ("photo_collections", "create_collection"),
+    "photo_collection_rename": ("photo_collections", "rename_collection"),
+    "photo_collection_delete": ("photo_collections", "delete_collection"),
+    "photo_collection_members": ("photo_collections", "edit_members"),
+    "person_collection_create": ("persons.collections", "create_collection"),
+    "person_collection_rename": ("persons.collections", "rename_collection"),
+    "person_collection_delete": ("persons.collections", "delete_collection"),
+    "person_collection_members": ("persons.collections", "edit_members"),
+    "person_collection_faces": ("persons.collections", "edit_face_members"),
+    "person_cover": ("persons.albums", "set_cover"),
+    "inbox_visibility": ("persons.albums", "set_inbox_visibility"),
+    "source_rename": (None, "rename_source"),
+}
+
+
+def catalog_write_busy() -> ApiError:
+    return ApiError(
+        "CATALOG_WRITE_BUSY", "the catalog write worker is not accepting requests right now",
+        status=503, details={"retryable": True}, headers={"Retry-After": "1"},
+    )
+
+
+def _dispatch(service: CatalogService, operation: str, parameters: dict[str, Any]) -> dict[str, Any]:
+    if operation in _WRITE_OPERATIONS:
+        return getattr(PersonService(service.catalog), operation)(**parameters)
+    module, name = _CATALOG_OPERATIONS[operation]
+    if module is None:
+        return service.rename_source(**parameters)
+    from importlib import import_module
+
+    function = getattr(import_module(f"photo_search.{module}"), name)
+    return function(service.catalog, **parameters)
+
+
 def person_write_busy() -> ApiError:
     return ApiError(
         "PERSON_WRITE_BUSY",
@@ -52,11 +89,11 @@ class PersonWriteWorker:
         self._stopping = False
 
     def submit(self, operation: str, **parameters: Any) -> Future[dict[str, Any]]:
-        if operation not in _WRITE_OPERATIONS:
+        if operation not in _WRITE_OPERATIONS and operation not in _CATALOG_OPERATIONS:
             raise ValueError(f"unsupported person write operation: {operation}")
         with self._condition:
             if self._stopping or len(self._pending) >= MAX_PENDING_PERSON_WRITES:
-                raise person_write_busy()
+                raise (person_write_busy() if operation in _WRITE_OPERATIONS else catalog_write_busy())
             if self._thread is None:
                 # If the server loop exits after deferred shutdown, accepted writes still
                 # need to finish before the process can exit and release its data-root lease.
@@ -96,7 +133,7 @@ class PersonWriteWorker:
                 try:
                     if service is None:
                         service = self._service_factory()
-                    answer = getattr(PersonService(service.catalog), operation)(**parameters)
+                    answer = _dispatch(service, operation, parameters)
                 except BaseException as error:
                     result.set_exception(error)
                 else:

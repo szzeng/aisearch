@@ -1,3 +1,7 @@
+## Current task: P4-FOREGROUND-CATALOG-WRITE-LANE-A（2026-11-27）
+
+**SCOPED PASS / SOL HIGH REVIEW PASS**。15 条前台写路由复用 B1 单 Worker；受影响组合 94 + 56 + 14 passed，正常/延迟关闭、混合队列及完整 lifespan 后持锁读取通过。未运行 lifespan 的初次测试暴露服务未初始化时读取等待锁；独立 Sol High 复现：启动恢复延迟且写队列满、SQLite 持锁时，503 脱敏会同步重试恢复并阻塞事件循环；B1 补跑 181/181，已修复脱敏恢复重试；修复后受影响 94/94、补充 2/2，独立 Sol High 复审通过。普通读取在启动恢复延迟时仍可能同步等待。未访问真实图库、未提交。[任务卡](tasks/P4-FOREGROUND-CATALOG-WRITE-LANE-A.md) · [报告](reports/P4-FOREGROUND-CATALOG-WRITE-LANE-A.md)
+
 ## Current task: P4-FOREGROUND-API-WRITE-ISOLATION-A（2026-11-27）
 
 **STOPPED / SOL REVIEW CHANGES REQUIRED**。独立 Sol 发现扫描登记与执行共用线程违反 202/同源复用，以及扫描身份交接、关闭与 lease、登记删除竞态等问题；原候选未通过，删除来源等路径暂缓。未改产品代码、未运行产品测试；[任务卡](tasks/P4-FOREGROUND-API-WRITE-ISOLATION-A.md) · [设计报告](reports/P4-FOREGROUND-API-WRITE-ISOLATION-A.md) · [较小设计卡](tasks/P4-SCAN-RUNNER-REGISTRATION-DESIGN.md)。

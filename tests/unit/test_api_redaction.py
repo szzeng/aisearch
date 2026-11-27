@@ -78,3 +78,33 @@ def test_redactor_empty_and_unconfigured_behavior_is_unchanged() -> None:
     assert unconfigured.text(None) == ""
     assert unconfigured.text("") == ""
     assert unconfigured.text(r"C:\Other\b.jpg") == r"C:\Other\b.jpg"
+
+
+def test_error_redactor_uses_only_existing_catalog_and_falls_back():
+    from types import SimpleNamespace
+
+    from photo_search.api.context import ApiContext
+
+    context = object.__new__(ApiContext)
+    context.settings = SimpleNamespace(data_root=r"D:\AppData")
+    context._service = None
+    # Even a cold or broken catalog must not be opened by an error response.
+    context.service = lambda: (_ for _ in ()).throw(AssertionError("service was opened"))
+    assert context.error_redactor().text(r"D:\AppData\catalog.db") == r"<data_root>\catalog.db"
+    assert context.error_redactor().text(r"E:\Unregistered\photo.jpg") == "<local_path>"
+
+    class Catalog:
+        def read_all(self, sql):
+            assert sql == "SELECT root_path FROM source_roots"
+            return [{"root_path": r"D:\Photos"}]
+
+    context._service = SimpleNamespace(catalog=Catalog())
+    assert context.error_redactor().text(r"D:\Photos\photo.jpg") == r"<source_root>\photo.jpg"
+
+    class BrokenCatalog:
+        def read_all(self, sql):
+            raise OSError("unavailable")
+
+    context._service = SimpleNamespace(catalog=BrokenCatalog())
+    assert context.error_redactor().text(r"D:\AppData\catalog.db") == r"<data_root>\catalog.db"
+    assert context.error_redactor().text(r"E:\Other\photo.jpg") == "<local_path>"
