@@ -1,3 +1,7 @@
+## Current task: P4-FOREGROUND-API-WRITE-ISOLATION-A（2026-11-27）
+
+**STOPPED / DESIGN AND VALIDATION PENDING**。扫描写入跨越关停宽限期时，现有关闭流程可能先关闭 Runner，导致登记后无法提交；涉及用户指定的关闭和 lease 停止条件。尚未改产品代码，完整路由盘点、实现及验收均未完成。详见[任务卡](tasks/P4-FOREGROUND-API-WRITE-ISOLATION-A.md)和[报告](reports/P4-FOREGROUND-API-WRITE-ISOLATION-A.md)。
+
 ## Current task: P4-BUILD-STATUS-ACCURACY-A（2026-11-27）
 
 **IMPLEMENTED / SOL REVIEW PASS / VALIDATION PENDING**。独立 Sol 全影响面复核发现的统计查询性能、候选状态与交互竞态已修复并复审通过；最终受影响组合 160 passed / 1 skipped。原组合 3 个失败在原始 HEAD 同样复现，未在最终组合重跑；原卡 DS-H 审查及实际任务状态浏览器验收仍待完成。未访问真实图库、未提交或发布。[任务卡](tasks/P4-BUILD-STATUS-ACCURACY-A.md) · [执行报告](reports/P4-BUILD-STATUS-ACCURACY-A.md)
