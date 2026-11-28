@@ -27,10 +27,11 @@ class Element {
 const document={cookie:"ps_csrf=synthetic-token",referrer:"",createElement:t=>new Element(t),createElementNS:(_ns,t)=>new Element(t),querySelector:s=>s==="dialog[open]"?(document.body.children.find(n=>n.tagName==="dialog"&&n.open)||null):null};
 document.body=new Element("body"); document.head=new Element("head");
 const maps=[];
-class FakeMap { constructor(options){this.options=options;this.events={};this.fired=[];this.removed=false;const summary={attributes:{},setAttribute(key,value){this.attributes[key]=String(value);}};const control={open:true,attributes:{open:""},attributionButton:summary,classList:{classes:new Set(["maplibregl-compact","maplibregl-compact-show"]),remove(name){this.classes.delete(name);}},querySelector(selector){return selector===".maplibregl-ctrl-attrib-button"?summary:null;},setAttribute(key,value){this.attributes[key]=String(value);},removeAttribute(name){delete this.attributes[name];}};this.options.container.attributionControl=control;maps.push(this);} on(k,fn){this.events[k]=fn;} fire(k){this.fired.push(k);if(this.events[k])this.events[k]({type:k});} addSource(id,source){this.source={id,source};} addLayer(layer){this.layer=layer;} remove(){this.removed=true;} }
+class FakeMap { constructor(container,options){this.container=container;this.options=options;this.removed=false;this.events={};maps.push(this);} addEventListener(name,fn){this.events[name]=fn;} centerAndZoom(point,zoom){this.center=point;this.zoom=zoom;} setMapType(type){this.type=type;} addOverlay(marker){this.marker=marker;} destroy(){this.removed=true;} }
+const BMap={Map:FakeMap,Point:class { constructor(lng,lat){this.lng=lng;this.lat=lat;} },Marker:class { constructor(point){this.point=point;} }};
 const resizeObservers=[];
 class FakeResizeObserver { constructor(callback){this.callback=callback;this.disconnected=false;resizeObservers.push(this);} observe(){} disconnect(){this.disconnected=true;} }
-const window={location:{href:"/"},maplibregl:{Map:FakeMap},AISEARCH_MAP_CONFIG:{sourceTemplates:key=>({"td-vec":{key},"td-cva":{key},"td-img":{key},"td-cia":{key}}),layerIds:layer=>layer==="imagery"?["td-img-layer","td-cia-layer"]:["td-vec-layer","td-cva-layer"]}};
+const window={location:{href:"/"},AISEARCH_BAIDU:{load:async()=>BMap},addEventListener(){},removeEventListener(){}};
 const fetches=[]; const faceWrites=[]; const changeTokens=[]; let releaseDetail,releaseFavoriteState,releaseOcr,faceWriteStatus=200;
 window.localStorage={setItem:(key,value)=>changeTokens.push({key,value}),getItem:()=>null};
 const ok=body=>({ok:true,status:200,json:async()=>body});
@@ -42,7 +43,7 @@ const detail=id=>({asset_id:id,sha256:"sha-"+id,byte_size:2048,width:1200,height
   {location_id:15,source_id:4,source_display_name:"绝对位置",relative_path:"\\rooted.jpg",availability:"PRESENT"},
   {location_id:16,source_id:4,source_display_name:"盘符相对位置",relative_path:"E:drive-relative.jpg",availability:"PRESENT"}]});
 const postCalls=[]; let deferLocal=false,releaseLocal;
-const context={document,window,navigator:{clipboard:{writeText:()=>Promise.reject(new Error("clipboard denied"))}},ResizeObserver:FakeResizeObserver,URL,fetch:async (url,options)=>{
+const context={document,window,setTimeout:()=>0,BMap,BMAP_NORMAL_MAP:"normal",BMAP_SATELLITE_MAP:"satellite",BMAP_HYBRID_MAP:"hybrid",navigator:{clipboard:{writeText:()=>Promise.reject(new Error("clipboard denied"))}},ResizeObserver:FakeResizeObserver,URL,fetch:async (url,options)=>{
   if(url.includes("/favorites/states")) {
     if(url.includes("asset_ids=701")) return new Promise(resolve=>{releaseFavoriteState=()=>resolve(ok({favorite_asset_ids:[701],favorites_revision:1}));});
     return ok({favorite_asset_ids:[],favorites_revision:0});
@@ -81,7 +82,7 @@ const context={document,window,navigator:{clipboard:{writeText:()=>Promise.rejec
     {assigned_person_id:7,assigned_person_name:"爸爸",assigned_person_asset_count:2,assigned_person_avatar_face_id:"a".repeat(64),thumbnail_url:"/face/merged"}]});
   if(url.includes("/map/assets")) return ok({total:url.includes("asset_id=301")||url.includes("asset_id=302")?0:1});
   if(url.endsWith("/geo")) return ok({status:"VALID",input_revision:"sha-101",datum_status:"WGS84",normalized_wgs84:{latitude:0,longitude:0}});
-  if(url==="/api/v1/map/provider-runtime") return ok({status:"CONFIGURED",key:"fake-map-key",default_layer:"vector"});
+  if(url==="/api/v1/map/baidu/provider-runtime") return ok({status:"CONFIGURED",ak:"fake-map-key",default_layer:"normal"});
   throw new Error("unexpected request: "+url);
 }};
 vm.createContext(context); vm.runInContext(fs.readFileSync("src/photo_search/web/photo-info.js","utf8"),context);
@@ -108,19 +109,10 @@ const flush=()=>new Promise(setImmediate), all=(root,fn)=>{const out=[];function
   assert.ok(!host.textContent.includes("D:\\library\\rooted.jpg"),"rooted relative paths are rejected");
   assert.ok(!host.textContent.includes("D:\\library\\E:drive-relative.jpg"),"drive-relative paths are rejected");
   assert.match(host.textContent,/文件时间 2020-01-02 03:04:05\.000/);
-  assert.equal(maps[0].options.center[0],0); assert.equal(maps[0].options.center[1],0);
-  assert.equal(maps[0].options.attributionControl.compact,true,"detail map uses compact attribution mode");
-  maps[0].events.load();
-  assert.equal(maps[0].options.container.attributionControl.open,false,"the detail map closes the compact attribution disclosure on initial load");
-  assert.ok(!maps[0].options.container.attributionControl.classList.classes.has("maplibregl-compact-show"),"the long attribution text is hidden until deliberately opened");
-  const mapBlock=all(host,n=>n.className==="photo-info-map")[0], attributionSummary={attributes:{},closest:selector=>selector===".maplibregl-ctrl-attrib-button"?attributionSummary:null,setAttribute(key,value){this.attributes[key]=String(value);}};
-  let prevented=false; mapBlock.fire("click",{target:attributionSummary,preventDefault(){prevented=true;}});
-  assert.ok(mapBlock.classList.names.has("photo-info-map-attribution-open"),"the attribution button can deliberately expand its text");
-  assert.equal(maps[0].options.container.attributionControl.open,true); assert.equal(attributionSummary.attributes["aria-expanded"],"true"); assert.ok(prevented);
-  mapBlock.fire("click",{target:attributionSummary,preventDefault(){prevented=true;}});
-  assert.ok(!mapBlock.classList.names.has("photo-info-map-attribution-open"),"the attribution button can collapse its text again");
-  assert.equal(maps[0].options.container.attributionControl.open,false); assert.equal(attributionSummary.attributes["aria-expanded"],"false");
-  assert.equal(JSON.stringify(maps[0].source.source.data.geometry.coordinates),"[0,0]");
+  assert.equal(maps[0].center.lng,0); assert.equal(maps[0].center.lat,0);
+  assert.equal(maps[0].marker.point.lng,0); assert.equal(maps[0].marker.point.lat,0);
+  assert.equal(maps[0].type,"normal");
+  assert.ok(all(host,n=>n.tagName==="a" && n.textContent==="在地图相册中查看").length===1);
   assert.equal(all(host,n=>n.tagName==="button"&&n.textContent==="复制完整路径").length,3);
   const localButtons=all(host,n=>n.className==="photo-info-local-action");
   assert.equal(localButtons.length,10,"each PRESENT location has both local actions; missing locations do not");

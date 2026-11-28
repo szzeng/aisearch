@@ -94,6 +94,75 @@ async def clear_provider_key(request: Request) -> JSONResponse:
                               "default_layer": config["default_layer"], "status": "NOT_CONFIGURED"})
 
 
+def _baidu_provider_config(request: Request):
+    from photo_search.baidu_map_provider_config import MapProviderConfigError, read
+
+    try:
+        return read(request.app.state.api.settings.data_root), None
+    except MapProviderConfigError:
+        return None, "CONFIG_UNREADABLE"
+
+
+@router.get("/baidu/provider-settings")
+async def baidu_provider_settings(request: Request) -> JSONResponse:
+    config, error = _baidu_provider_config(request)
+    if error:
+        return _private_response({"configured": False, "provider": "baidu", "default_layer": "normal", "status": error})
+    return _private_response({"configured": bool(config["ak"]), "provider": "baidu",
+                              "default_layer": config["default_layer"],
+                              "status": "CONFIGURED" if config["ak"] else "NOT_CONFIGURED"})
+
+
+@router.get("/baidu/provider-runtime")
+async def baidu_provider_runtime(request: Request) -> JSONResponse:
+    config, error = _baidu_provider_config(request)
+    if error:
+        return _private_response({"status": error})
+    if not config["ak"]:
+        return _private_response({"status": "NOT_CONFIGURED", "provider": "baidu",
+                                  "default_layer": config["default_layer"]})
+    return _private_response({"status": "CONFIGURED", "provider": "baidu", "ak": config["ak"],
+                              "default_layer": config["default_layer"]})
+
+
+@router.put("/baidu/provider-settings")
+async def update_baidu_provider_settings(request: Request) -> JSONResponse:
+    from photo_search.baidu_map_provider_config import MapProviderConfigError, write
+
+    try:
+        body = await request.json()
+        if not isinstance(body, dict) or set(body) - {"ak", "default_layer"} or not body:
+            raise MapProviderConfigError("invalid settings fields")
+        ak = body.get("ak")
+        if "ak" in body and (not isinstance(ak, str) or not ak):
+            raise MapProviderConfigError("empty Key cannot replace a saved Key")
+        layer = body.get("default_layer")
+        config = write(request.app.state.api.settings.data_root, ak=ak,
+                       default_layer=layer if layer is not None else None)
+    except MapProviderConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        # Do not echo request values or filesystem details; the Key is sensitive.
+        raise HTTPException(status_code=500, detail="map settings could not be saved") from exc
+    return _private_response({"configured": bool(config["ak"]), "provider": "baidu",
+                              "default_layer": config["default_layer"],
+                              "status": "CONFIGURED" if config["ak"] else "NOT_CONFIGURED"})
+
+
+@router.delete("/baidu/provider-settings/ak")
+async def clear_baidu_provider_key(request: Request) -> JSONResponse:
+    from photo_search.baidu_map_provider_config import MapProviderConfigError, write
+
+    try:
+        config = write(request.app.state.api.settings.data_root, clear_key=True)
+    except MapProviderConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="map settings could not be saved") from exc
+    return _private_response({"configured": False, "provider": "baidu",
+                              "default_layer": config["default_layer"], "status": "NOT_CONFIGURED"})
+
+
 def _revision(db: Any) -> int:
     row = db.execute("SELECT revision FROM map_member_revision WHERE singleton=1").fetchone()
     return int(row[0]) if row else 1
@@ -156,10 +225,19 @@ def _grid_expression(
     return xexpr, xargs, yexpr, yargs
 
 
+def _world_grid_expression(level: int) -> tuple[str, list[Any], str, list[Any]]:
+    # Fixed geographic cells: unlike viewport-relative cells these do not move
+    # when the map is panned. Clamp the inclusive world edges to the last cell.
+    scale = 2 ** int(level)
+    xexpr = "MIN(?, MAX(0, CAST(((g.longitude+180.0)/360.0)*? AS INTEGER)))"
+    yexpr = "MIN(?, MAX(0, CAST(((g.latitude+90.0)/180.0)*? AS INTEGER)))"
+    return xexpr, [scale - 1, scale], yexpr, [scale - 1, scale]
+
+
 def _bounded_grid(rows: Iterable[Any], level: int) -> tuple[list[list[Any]], int]:
     """Fold fine cells into exact parents, retaining at most 1001 cells.
 
-    Grid levels divide the same viewport by powers of two. Parent indices are
+    Both viewport and world grid levels divide their extent by powers of two. Parent indices are
     therefore integer shifts, including the clamped east/north boundary cells.
     Once occupied parents exceed the cap, adding rows can never reduce that
     number, so it is safe to coarsen while streaming the single SQL aggregation.
@@ -170,13 +248,18 @@ def _bounded_grid(rows: Iterable[Any], level: int) -> tuple[list[list[Any]], int
     def add(target: dict, key: tuple[int, int], row: Any) -> None:
         current = target.get(key)
         if current is None:
-            target[key] = [*key, int(row[2]), *row[3:7]]
+            target[key] = [*key, int(row[2]), *row[3:]]
         else:
             current[2] += int(row[2])
             current[3] = min(current[3], row[3])
             current[4] = max(current[4], row[4])
             current[5] = min(current[5], row[5])
             current[6] = max(current[6], row[6])
+            if len(current) > 7:
+                current[7] = min(current[7], row[7])
+            if len(current) > 9:
+                current[8] += row[8]
+                current[9] += row[9]
 
     for row in rows:
         shift = original_level - level
@@ -188,6 +271,14 @@ def _bounded_grid(rows: Iterable[Any], level: int) -> tuple[list[list[Any]], int
             cells = parents
             level -= 1
     return [cells[key] for key in sorted(cells)], level
+
+
+def _grid_center_longitude(west: float, east: float, bbox: tuple[float, float, float, float] | None) -> float:
+    # A cell can straddle the antimeridian. Its extrema are then on opposite
+    # sides of +/-180, so their ordinary arithmetic midpoint is misleading.
+    if bbox and bbox[0] > bbox[2] and west < 0 <= east:
+        return ((west + 360.0 + east) / 2.0 + 180.0) % 360.0 - 180.0
+    return (west + east) / 2.0
 
 
 def _read(request: Request):
@@ -322,6 +413,7 @@ def _map_assets(
             detail="capture-time browsing is available for the complete viewport only",
         )
     bbox = _valid_bbox(west, south, east, north)
+    explicit_world = (west, south, east, north) == (-180.0, -90.0, 180.0, 90.0)
     size = max(1, min(100, int(limit)))
     with db.read_snapshot() as conn:
         where, args = _where(bbox)
@@ -331,16 +423,22 @@ def _map_assets(
             args.append(int(asset_id))
         if cell_id is not None:
             cell_parts = cell_id.split(":")
+            world_grid = len(cell_parts) == 3 and cell_parts[0] == "w"
+            indices = cell_parts[1:] if world_grid else cell_parts
             if (
-                bbox is None
+                (bbox is None and not explicit_world)
                 or grid_zoom is None
                 or not 0 <= int(grid_zoom) <= 20
-                or len(cell_parts) != 2
-                or not all(part.isdigit() for part in cell_parts)
+                or len(indices) != 2
+                or not all(part.isdigit() for part in indices)
+                or (world_grid and any(int(part) >= 2 ** int(grid_zoom or 0) for part in indices))
             ):
                 raise HTTPException(status_code=422, detail="cell_id requires valid grid_zoom")
-            gx, gy = map(int, cell_id.split(":"))
-            xexpr, xargs, yexpr, yargs = _grid_expression(bbox, int(grid_zoom))
+            gx, gy = map(int, indices)
+            xexpr, xargs, yexpr, yargs = (
+                _world_grid_expression(int(grid_zoom)) if world_grid
+                else _grid_expression(bbox, int(grid_zoom))
+            )
             where += f" AND ({xexpr})=? AND ({yexpr})=?"
             args.extend([*xargs, gx, *yargs, gy])
         version = _revision(conn)
@@ -459,15 +557,16 @@ async def map_points(
     east: float | None = None,
     north: float | None = None,
     zoom: int = 3,
+    grid: bool = False,
 ) -> dict[str, Any]:
     return await run_catalog_read(
-        _read(request), _map_points, west=west, south=south, east=east, north=north, zoom=zoom,
+        _read(request), _map_points, west=west, south=south, east=east, north=north, zoom=zoom, grid=grid,
     )
 
 
 def _map_points(
     db: Any, *, west: float | None = None, south: float | None = None,
-    east: float | None = None, north: float | None = None, zoom: int = 3,
+    east: float | None = None, north: float | None = None, zoom: int = 3, grid: bool = False,
 ) -> dict[str, Any]:
     bbox = _valid_bbox(west, south, east, north)
     if not 0 <= int(zoom) <= 22:
@@ -477,7 +576,7 @@ def _map_points(
         source = _from_sql(bbox)
         version = _revision(conn)
         total = _exact_total(db, conn, version=version, source=source, where=where, args=args)
-        if total <= MAX_PHOTO_POINTS:
+        if total <= MAX_PHOTO_POINTS and not grid:
             rows = conn.execute(
                 f"SELECT a.asset_id,g.longitude,g.latitude FROM {source} WHERE {where} ORDER BY a.asset_id",
                 args,
@@ -497,11 +596,14 @@ def _map_points(
                 "total": total,
                 "member_version": version,
             }
-        # Cells divide the requested viewport so city and small-area grids remain useful.
+        # Forced Baidu grids are anchored to the world, not the moving viewport.
+        # The legacy grid keeps its existing viewport-relative contract.
         level = max(0, min(20, int(zoom) + 2))
-        xexpr, xargs, yexpr, yargs = _grid_expression(bbox, level)
+        xexpr, xargs, yexpr, yargs = (
+            _world_grid_expression(level) if grid else _grid_expression(bbox, level)
+        )
         rows, level = _bounded_grid(conn.execute(
-            f"SELECT ({xexpr}) gx, ({yexpr}) gy, COUNT(*) n, MIN(g.longitude),MAX(g.longitude),MIN(g.latitude),MAX(g.latitude) FROM {source} WHERE {where} GROUP BY gx,gy ORDER BY gx,gy",
+            f"SELECT ({xexpr}) gx, ({yexpr}) gy, COUNT(*) n, MIN(g.longitude),MAX(g.longitude),MIN(g.latitude),MAX(g.latitude),MIN(a.asset_id),SUM(g.longitude),SUM(g.latitude) FROM {source} WHERE {where} GROUP BY gx,gy ORDER BY gx,gy",
             [*xargs, *yargs, *args],
         ), level)
         features = [
@@ -510,12 +612,12 @@ def _map_points(
                 "geometry": {
                     "type": "Point",
                     "coordinates": [
-                        (float(r[3]) + float(r[4])) / 2,
-                        (float(r[5]) + float(r[6])) / 2,
+                        float(r[8]) / int(r[2]) if grid else _grid_center_longitude(float(r[3]), float(r[4]), bbox),
+                        float(r[9]) / int(r[2]) if grid else (float(r[5]) + float(r[6])) / 2,
                     ],
                 },
                 "properties": {
-                    "cell_id": f"{int(r[0])}:{int(r[1])}",
+                    "cell_id": f"{'w:' if grid else ''}{int(r[0])}:{int(r[1])}",
                     "asset_count": int(r[2]),
                     "cell_bounds": {
                         "west": float(r[3]),
@@ -524,6 +626,7 @@ def _map_points(
                         "north": float(r[6]),
                     },
                     "grid_zoom": level,
+                    **({"asset_id": int(r[7])} if grid and int(r[2]) == 1 else {}),
                 },
             }
             for r in rows

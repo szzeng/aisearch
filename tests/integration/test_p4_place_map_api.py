@@ -123,6 +123,60 @@ def test_map_membership_bbox_cursor_and_revision(api_env) -> None:
     api_env.scenario(scenario)
 
 
+def test_optional_grid_preserves_default_and_cell_members(api_env) -> None:
+    _seed_map(api_env)
+
+    async def scenario(client):
+        await api_env.authenticate(client)
+        bounds = {"west": -1, "south": -1, "east": 1, "north": 1, "zoom": 8}
+        normal = (await client.get("/api/v1/map/points", params=bounds)).json()
+        forced = (await client.get("/api/v1/map/points", params={**bounds, "grid": "true"})).json()
+        assert normal["mode"] == "photos" and forced["mode"] == "grid"
+        assert forced["member_version"] == normal["member_version"]
+        assert sum(f["properties"]["asset_count"] for f in forced["features"]) == 2
+        cell = forced["features"][0]["properties"]
+        members = (await client.get("/api/v1/map/assets", params={**bounds, "cell_id": cell["cell_id"], "grid_zoom": cell["grid_zoom"]})).json()
+        assert {a["asset_id"] for a in members["assets"]} == {f["properties"]["asset_id"] for f in normal["features"]}
+        single_bounds = {"west": -74, "south": 44, "east": -72, "north": 46, "zoom": 8}
+        single = (await client.get("/api/v1/map/points", params={**single_bounds, "grid": "true"})).json()
+        assert single["total"] == 1
+        assert single["features"][0]["properties"]["asset_id"] > 0
+        crossing = {"west": 179, "south": 30, "east": -170, "north": 40, "zoom": 0, "grid": "true"}
+        wrapped = (await client.get("/api/v1/map/points", params=crossing)).json()
+        assert wrapped["total"] == 2
+        assert sum(f["properties"]["asset_count"] for f in wrapped["features"]) == 2
+        assert all(abs(f["geometry"]["coordinates"][0]) > 170 for f in wrapped["features"])
+        world = {"west": -180, "south": -90, "east": 180, "north": 90, "zoom": 0}
+        world_grid = (await client.get("/api/v1/map/points", params={**world, "grid": "true"})).json()
+        world_cell = world_grid["features"][0]["properties"]
+        response = await client.get("/api/v1/map/assets", params={**world, "cell_id": world_cell["cell_id"], "grid_zoom": world_cell["grid_zoom"]})
+        assert response.status_code == 200
+        assert response.json()["total"] == world_cell["asset_count"]
+
+    api_env.scenario(scenario)
+
+
+def test_forced_grid_refines_with_zoom_and_keeps_members(api_env):
+    _seed_map(api_env)
+
+    async def scenario(client):
+        await api_env.authenticate(client)
+        bounds = {"west": 119, "south": 29, "east": 122, "north": 32, "grid": "true"}
+        low = (await client.get("/api/v1/map/points", params={**bounds, "zoom": 4})).json()
+        high = (await client.get("/api/v1/map/points", params={**bounds, "zoom": 15})).json()
+        assert low["grid_zoom"] < high["grid_zoom"]
+        assert len(high["features"]) > len(low["features"])
+        assert low["total"] == high["total"]
+        for feature in low["features"] + high["features"]:
+            properties = feature["properties"]
+            members = (await client.get("/api/v1/map/assets", params={
+                **bounds, "cell_id": properties["cell_id"], "grid_zoom": properties["grid_zoom"], "limit": 48,
+            })).json()
+            assert members["total"] == properties["asset_count"]
+
+    api_env.scenario(scenario)
+
+
 def test_map_capture_time_order_pages_the_complete_viewport_and_binds_revisions(api_env) -> None:
     _seed_map(api_env)
     catalog = api_env.service.catalog

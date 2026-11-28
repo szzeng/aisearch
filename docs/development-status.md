@@ -1,3 +1,7 @@
+## Current task: P4-PLACE-MAP-BAIDU-A（2026-11-28）
+
+**IMPLEMENTED / VALIDATION PENDING**。百度 SDK 合成错误响应复现状态码丢失；页面内有界缓存减少重复转换，定向 JUnit 20 passed。现场原因、最终浏览器验收和独立 DS-H 审查仍待验证。[任务卡](tasks/P4-PLACE-MAP-BAIDU-A.md) · [报告](reports/P4-PLACE-MAP-BAIDU-A.md)。
+
 ## Current task: P4-FOREGROUND-CATALOG-WRITE-LANE-A（2026-11-27）
 
 **SCOPED PASS / SOL HIGH REVIEW PASS**。15 条前台写路由复用 B1 单 Worker；受影响组合 94 + 56 + 14 passed，正常/延迟关闭、混合队列及完整 lifespan 后持锁读取通过。未运行 lifespan 的初次测试暴露服务未初始化时读取等待锁；独立 Sol High 复现：启动恢复延迟且写队列满、SQLite 持锁时，503 脱敏会同步重试恢复并阻塞事件循环；B1 补跑 181/181，已修复脱敏恢复重试；修复后受影响 94/94、补充 2/2，独立 Sol High 复审通过。普通读取在启动恢复延迟时仍可能同步等待。未访问真实图库、未提交。[任务卡](tasks/P4-FOREGROUND-CATALOG-WRITE-LANE-A.md) · [报告](reports/P4-FOREGROUND-CATALOG-WRITE-LANE-A.md)

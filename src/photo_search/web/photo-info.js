@@ -208,85 +208,40 @@
     return sourceRoots.get(key);
   }
   function disposeMap(state) {
-    if (state.map) { try { state.map.remove(); } catch (_) {} state.map = null; }
-  }
-  function collapseMapAttribution(canvas) {
-    var control = canvas.querySelector && canvas.querySelector(".maplibregl-ctrl-attrib");
-    if (!control) return;
-    control.classList.remove("maplibregl-compact-show");
-    control.open = false;
-    control.removeAttribute("open");
-    var summary = control.querySelector && control.querySelector(".maplibregl-ctrl-attrib-button");
-    if (summary) summary.setAttribute("aria-expanded", "false");
+    if (state.mapAuthError) {
+      window.removeEventListener("aisearch-baidu-auth-error", state.mapAuthError); state.mapAuthError = null;
+    }
+    if (state.map) { try { state.map.destroy(); } catch (_) {} state.map = null; }
   }
   function showMap(host, asset, assetId, state) {
     var block = node("section", undefined, "photo-info-map");
-    block.addEventListener("click", function (event) {
-      var target = event.target;
-      var summary = target && typeof target.closest === "function" && target.closest(".maplibregl-ctrl-attrib-button");
-      if (!summary) return;
-      block.classList.toggle("photo-info-map-attribution-open");
-      var control = canvas.querySelector && canvas.querySelector(".maplibregl-ctrl-attrib");
-      var expanded = block.classList.contains("photo-info-map-attribution-open");
-      if (control) {
-        control.open = expanded;
-        if (expanded) control.setAttribute("open", "");
-        else control.removeAttribute("open");
-      }
-      summary.setAttribute("aria-expanded", String(expanded));
-      if (event.preventDefault) event.preventDefault();
-    });
     block.append(node("h3", "拍摄位置"));
-    var coords = node("p", "坐标：" + asset.latitude + ", " + asset.longitude, "hint"); block.append(coords);
+    block.append(node("p", "坐标：" + asset.latitude + ", " + asset.longitude, "hint"));
     var canvas = node("div", undefined, "photo-info-map-canvas");
     canvas.setAttribute("aria-label", "照片 GPS 位置地图"); block.append(canvas); host.append(block);
     var url = document.createElement("a"); url.className = "nav-link"; url.textContent = "在地图相册中查看";
     url.href = "/map?asset_id=" + encodeURIComponent(assetId); block.append(url);
     function unavailable() {
-      if (!state.active) return;
-      canvas.textContent = "地图暂不可用；已知坐标：" + asset.latitude + ", " + asset.longitude;
-      disposeMap(state);
+      if (!state.active || !canvas.isConnected) return;
+      disposeMap(state); canvas.textContent = "地图暂不可用；已知坐标：" + asset.latitude + ", " + asset.longitude;
     }
-    function draw() {
-      if (!state.active || !canvas.isConnected || !window.maplibregl) return;
-      fetch("/api/v1/map/provider-runtime", { credentials: "same-origin", cache: "no-store" }).then(function (response) {
-        return response.json().then(function (runtime) { if (!response.ok) throw new Error("runtime unavailable"); return runtime; });
-      }).then(function (runtime) {
+    state.mapAuthError = unavailable;
+    window.addEventListener("aisearch-baidu-auth-error", unavailable);
+    fetch("/api/v1/map/baidu/provider-runtime", {credentials:"same-origin", cache:"no-store"})
+      .then(function (response) { if (!response.ok) throw new Error("地图配置不可用"); return response.json(); })
+      .then(function (runtime) {
         if (!state.active || !canvas.isConnected) return;
-        if (runtime.status !== "CONFIGURED" || !runtime.key) {
-          var unavailableMessage = runtime.status === "NOT_CONFIGURED"
-            ? "未配置天地图；已知坐标："
-            : runtime.status === "CONFIG_UNREADABLE"
-              ? "地图配置无法读取；已知坐标："
-              : "地图服务暂不可用；已知坐标：";
-          canvas.textContent = unavailableMessage + asset.latitude + ", " + asset.longitude;
-          return;
-        }
-        var config = window.AISEARCH_MAP_CONFIG, layerType = runtime.default_layer === "imagery" ? "imagery" : "vector";
-        var allSources = config.sourceTemplates(runtime.key), ids = config.layerIds(layerType);
-        var sourceNames = layerType === "imagery" ? ["td-img", "td-cia"] : ["td-vec", "td-cva"];
-        state.map = new window.maplibregl.Map({ container: canvas, center: [asset.longitude, asset.latitude], zoom: 12,
-          interactive: false, attributionControl: { compact: true }, style: { version: 8, sources: {}, layers: [] } });
-        state.map.on("load", function () {
-          if (!state.active || !state.map) return;
-          sourceNames.forEach(function (name) { state.map.addSource(name, allSources[name]); });
-          ids.forEach(function (id, index) { state.map.addLayer({ id: id, type: "raster", source: sourceNames[index], minzoom: 0, maxzoom: 18 }); });
-          state.map.addSource("photo-location", { type: "geojson", data: { type: "Feature", geometry: { type: "Point", coordinates: [asset.longitude, asset.latitude] }, properties: {} } });
-          state.map.addLayer({ id: "photo-location", type: "circle", source: "photo-location", paint: { "circle-radius": 7, "circle-color": "#dc3545", "circle-stroke-color": "#fff", "circle-stroke-width": 2 } });
-          // Compact attribution starts open; this detail map cannot be dragged to dismiss it.
-          collapseMapAttribution(canvas);
+        if (runtime.status !== "CONFIGURED" || !runtime.ak || !window.AISEARCH_BAIDU) throw new Error("地图未配置");
+        return window.AISEARCH_BAIDU.load(runtime.ak).then(function () {
+          if (!state.active || !canvas.isConnected) return;
+          var point = new BMap.Point(asset.longitude, asset.latitude);
+          state.map = new BMap.Map(canvas, {enableDragging:false, enableScrollWheelZoom:false});
+          state.map.centerAndZoom(point, 12);
+          state.map.setMapType(runtime.default_layer === "satellite" ? BMAP_SATELLITE_MAP :
+            runtime.default_layer === "hybrid" ? BMAP_HYBRID_MAP : BMAP_NORMAL_MAP);
+          state.map.addOverlay(new BMap.Marker(point));
         });
-        state.map.on("error", unavailable);
       }).catch(unavailable);
-    }
-    if (window.maplibregl) draw();
-    else {
-      var css = "/web/vendor/maplibre-4.7.1/dist/maplibre-gl.css";
-      if (!document.querySelector('link[href="' + css + '"]')) { var linkTag = node("link"); linkTag.rel = "stylesheet"; linkTag.href = css; document.head.append(linkTag); }
-      var script = document.querySelector('script[data-photo-map="true"]');
-      if (!script) { script = node("script"); script.src = "/web/vendor/maplibre-4.7.1/dist/maplibre-gl.js"; script.dataset.photoMap = "true"; document.head.append(script); }
-      script.addEventListener("load", draw, { once: true }); script.addEventListener("error", unavailable, { once: true });
-    }
   }
   function faceRequestId() { return "photo-face-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2); }
   function renderFaceManager(section, assetId, state, body, reload) {

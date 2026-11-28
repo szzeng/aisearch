@@ -183,6 +183,7 @@ async def static_asset(path: str) -> Response:
             "map-boot.js",
             "map.css",
             "map-config.js",
+            "baidu-map-engine.js",
             "photo-info.js",
             "photo-info.css",
         )
